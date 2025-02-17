@@ -1,0 +1,150 @@
+uses
+  SysUtils, Windows, Messages, Classes, Graphics, Controls, Forms, Dialogs,
+  StdCtrls, ExtCtrls, mORMot; // Подключите библиотеку для Modbus RTU
+
+type
+  TForm1 = class(TForm)
+    Edit1: TEdit;  // Для прибора 1, канал 1
+    Edit2: TEdit;  // Для прибора 1, канал 2
+    Edit3: TEdit;  // Для прибора 1, канал 3
+    Edit4: TEdit;  // Для прибора 2, канал 1
+    Edit5: TEdit;  // Для прибора 2, канал 2
+    Edit6: TEdit;  // Для прибора 2, канал 3
+    Edit7: TEdit;  // Для прибора 3, канал 1
+    Edit8: TEdit;  // Для прибора 3, канал 2
+    Edit9: TEdit;  // Для прибора 3, канал 3
+    Edit10: TEdit; // Для прибора 4, канал 1
+    Edit11: TEdit; // Для прибора 4, канал 2
+    Edit12: TEdit; // Для прибора 4, канал 3
+    Edit13: TEdit; // Для прибора 1, регистр 72
+    Timer1: TTimer; // Таймер для опроса
+    procedure Timer1Timer(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+  private
+    { Private declarations }
+    ModbusClient: TModbusRTUClient; // Клиент Modbus RTU
+    procedure ReadModbusData;
+    function CRC16(const Data: array of Byte): Word; // Функция для проверки CRC16
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+procedure TForm1.FormCreate(Sender: TObject);
+begin
+  // Инициализация Modbus клиента
+  ModbusClient := TModbusRTUClient.Create;
+  ModbusClient.ComPort := 'COM1'; // Укажите ваш COM-порт
+  ModbusClient.BaudRate := 9600;  // Скорость передачи
+  ModbusClient.Parity := 'N';     // Чётность
+  ModbusClient.DataBits := 8;     // Биты данных
+  ModbusClient.StopBits := 1;     // Стоп-биты
+
+  Timer1.Interval := 3000; // Опрос каждые 3 секунды
+  Timer1.Enabled := True;  // Запуск таймера
+end;
+
+procedure TForm1.Timer1Timer(Sender: TObject);
+begin
+  ReadModbusData; // Опрос устройств
+end;
+
+procedure TForm1.ReadModbusData;
+var
+  i, j: Integer;
+  Address: Byte;
+  Registers: array[0..1] of Word;
+  CRC: Word;
+  Response: array of Byte;
+begin
+  // Опрос 4 приборов
+  for i := 1 to 4 do
+  begin
+    Address := i; // Адрес прибора
+    // Чтение регистров 25-26, 27-28, 29-30
+    for j := 0 to 2 do
+    begin
+      if ModbusClient.ReadHoldingRegisters(Address, 25 + j * 2, 2, Registers) then
+      begin
+        // Проверка CRC
+        Response := ModbusClient.LastResponse;
+        CRC := CRC16(Response);
+        if CRC = 0 then // Если CRC верна
+        begin
+          // Вывод данных в Edit-поля
+          case i of
+            1:
+              begin
+                case j of
+                  0: Edit1.Text := IntToStr(Registers[0]);
+                  1: Edit2.Text := IntToStr(Registers[0]);
+                  2: Edit3.Text := IntToStr(Registers[0]);
+                end;
+              end;
+            2:
+              begin
+                case j of
+                  0: Edit4.Text := IntToStr(Registers[0]);
+                  1: Edit5.Text := IntToStr(Registers[0]);
+                  2: Edit6.Text := IntToStr(Registers[0]);
+                end;
+              end;
+            3:
+              begin
+                case j of
+                  0: Edit7.Text := IntToStr(Registers[0]);
+                  1: Edit8.Text := IntToStr(Registers[0]);
+                  2: Edit9.Text := IntToStr(Registers[0]);
+                end;
+              end;
+            4:
+              begin
+                case j of
+                  0: Edit10.Text := IntToStr(Registers[0]);
+                  1: Edit11.Text := IntToStr(Registers[0]);
+                  2: Edit12.Text := IntToStr(Registers[0]);
+                end;
+              end;
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  // Чтение регистра 72 прибора 1
+  if ModbusClient.ReadHoldingRegisters(1, 72, 1, Registers) then
+  begin
+    Response := ModbusClient.LastResponse;
+    CRC := CRC16(Response);
+    if CRC = 0 then
+      Edit13.Text := IntToStr(Registers[0]);
+  end;
+end;
+
+function TForm1.CRC16(const Data: array of Byte): Word;
+var
+  i, j: Integer;
+  CRC: Word;
+begin
+  CRC := $FFFF;
+  for i := 0 to High(Data) do
+  begin
+    CRC := CRC xor Data[i];
+    for j := 0 to 7 do
+    begin
+      if (CRC and $0001) <> 0 then
+        CRC := (CRC shr 1) xor $A001
+      else
+        CRC := CRC shr 1;
+    end;
+  end;
+  Result := CRC;
+end;
+
+end.
