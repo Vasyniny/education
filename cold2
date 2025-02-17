@@ -1,3 +1,174 @@
+//с записью в тхтфайлы
+unit MainUnit;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, CPort, ExtCtrls;
+
+type
+  TForm1 = class(TForm)
+    ComPort1: TComPort;
+    Timer1: TTimer;
+    Edit1: TEdit;  // Прибор 1: каналы 1-3
+    Edit2: TEdit;
+    Edit3: TEdit;
+    Edit4: TEdit;  // Прибор 2
+    Edit5: TEdit;
+    Edit6: TEdit;
+    Edit7: TEdit;  // Прибор 3
+    Edit8: TEdit;
+    Edit9: TEdit;
+    Edit10: TEdit; // Прибор 4
+    Edit11: TEdit;
+    Edit12: TEdit;
+    Edit13: TEdit; // Прибор 3, регистр 72
+    procedure FormCreate(Sender: TObject);
+    procedure Timer1Timer(Sender: TObject);
+  private
+    { Private declarations }
+    function CalculateCRC(const Data: array of Byte; Len: Integer): Word;
+    function ReadRegisters(Address: Byte; StartReg: Word; var Data: array of Word): Boolean;
+    function ConvertToFloat(Reg1, Reg2: Word): Single;
+    procedure SaveToFile(Device, Channel: Integer; Value: Single);
+  public
+    { Public declarations }
+  end;
+
 var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+procedure TForm1.FormCreate(Sender: TObject);
 begin
+  // Инициализация COM-порта
+  ComPort1.Port := 'COM1';
+  ComPort1.BaudRate := br9600;
+  ComPort1.DataBits := dbEight;
+  ComPort1.StopBits := sbOne;
+  ComPort1.Parity.Bits := prNone;
+  ComPort1.Open;
+  Timer1.Interval := 3000; // 3 секунды
 end;
+
+function TForm1.ConvertToFloat(Reg1, Reg2: Word): Single;
+begin
+  Result := PSingle(@LongWord((Reg1 shl 16) or Reg2))^;
+end;
+
+procedure TForm1.SaveToFile(Device, Channel: Integer; Value: Single);
+var
+  FileName: string;
+  F: TextFile;
+begin
+  if Value > 35 then
+  begin
+    FileName := Format('Device%d_Channel%d.txt', [Device, Channel]);
+    AssignFile(F, FileName);
+    try
+      if FileExists(FileName) then
+        Append(F)
+      else
+        Rewrite(F);
+      Writeln(F, FormatDateTime('dd.mm.yyyy hh:nn:ss', Now) + ' | ' + FormatFloat('0.000', Value));
+    finally
+      CloseFile(F);
+    end;
+  end;
+end;
+
+function TForm1.CalculateCRC(const Data: array of Byte; Len: Integer): Word;
+var
+  i, j: Integer;
+  CRC: Word;
+begin
+  CRC := $FFFF;
+  for i := 0 to Len - 1 do
+  begin
+    CRC := CRC xor Data[i];
+    for j := 0 to 7 do
+    begin
+      if (CRC and $0001) <> 0 then
+        CRC := (CRC shr 1) xor $A001
+      else
+        CRC := CRC shr 1;
+    end;
+  end;
+  Result := CRC;
+end;
+
+function TForm1.ReadRegisters(Address: Byte; StartReg: Word; var Data: array of Word): Boolean;
+const
+  REQ_LEN = 8;
+  RESP_HEADER = 5;
+var
+  Request: array[0..7] of Byte;
+  Response: array[0..255] of Byte;
+  CRC, RecvCRC: Word;
+  i, RespLen: Integer;
+begin
+  Result := False;
+  FillChar(Data[0], Length(Data)*SizeOf(Word), 0);
+
+  // Формирование Modbus-запроса
+  Request[0] := Address;
+  Request[1] := $03;
+  Request[2] := Hi(StartReg);
+  Request[3] := Lo(StartReg);
+  Request[4] := Hi(2);
+  Request[5] := Lo(2);
+
+  CRC := CalculateCRC(Request, 6);
+  Request[6] := Lo(CRC);
+  Request[7] := Hi(CRC);
+
+  ComPort1.ClearBuffer(True, True);
+  ComPort1.Write(Request, REQ_LEN);
+
+  Sleep(500);
+  RespLen := ComPort1.InputCount;
+  if RespLen < (RESP_HEADER + 4) then Exit;
+
+  ComPort1.Read(Response, RespLen);
+  RecvCRC := CalculateCRC(Response, RespLen - 2);
+
+  if (Response[RespLen-2] = Lo(RecvCRC)) and 
+     (Response[RespLen-1] = Hi(RecvCRC)) then
+  begin
+    for i := 0 to 1 do
+      Data[i] := (Response[3 + i*2] shl 8) or Response[4 + i*2];
+    Result := True;
+  end;
+end;
+
+procedure TForm1.Timer1Timer(Sender: TObject);
+var
+  Device, Channel: Integer;
+  RegData: array[0..1] of Word;
+  FloatValue: Single;
+  EditIndex: Integer;
+begin
+  for Device := 1 to 4 do
+  begin
+    for Channel := 0 to 2 do
+    begin
+      if ReadRegisters(Device, 25 + Channel*2, RegData) then
+      begin
+        FloatValue := ConvertToFloat(RegData[0], RegData[1]);
+        EditIndex := (Device-1)*3 + Channel;
+        TEdit(FindComponent('Edit' + IntToStr(EditIndex + 1))).Text := FormatFloat('0.000', FloatValue);
+        SaveToFile(Device, Channel+1, FloatValue);
+      end;
+    end;
+  end;
+
+  // Чтение специального регистра 72 прибора 3
+  if ReadRegisters(3, 72, RegData) then
+    Edit13.Text := IntToStr(RegData[0]);
+end;
+
+end.
