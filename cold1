@@ -1,30 +1,35 @@
+unit MainUnit;
+
+interface
+
 uses
-  SysUtils, Windows, Messages, Classes, Graphics, Controls, Forms, Dialogs,
-  StdCtrls, ExtCtrls, mORMot; // Подключите библиотеку для Modbus RTU
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, CPort, ExtCtrls;
 
 type
   TForm1 = class(TForm)
-    Edit1: TEdit;  // Для прибора 1, канал 1
-    Edit2: TEdit;  // Для прибора 1, канал 2
-    Edit3: TEdit;  // Для прибора 1, канал 3
-    Edit4: TEdit;  // Для прибора 2, канал 1
-    Edit5: TEdit;  // Для прибора 2, канал 2
-    Edit6: TEdit;  // Для прибора 2, канал 3
-    Edit7: TEdit;  // Для прибора 3, канал 1
-    Edit8: TEdit;  // Для прибора 3, канал 2
-    Edit9: TEdit;  // Для прибора 3, канал 3
-    Edit10: TEdit; // Для прибора 4, канал 1
-    Edit11: TEdit; // Для прибора 4, канал 2
-    Edit12: TEdit; // Для прибора 4, канал 3
-    Edit13: TEdit; // Для прибора 1, регистр 72
-    Timer1: TTimer; // Таймер для опроса
-    procedure Timer1Timer(Sender: TObject);
+    ComPort1: TComPort;
+    Timer1: TTimer;
+    Edit1: TEdit;  // Прибор 1: каналы 1-3
+    Edit2: TEdit;
+    Edit3: TEdit;
+    Edit4: TEdit;  // Прибор 2
+    Edit5: TEdit;
+    Edit6: TEdit;
+    Edit7: TEdit;  // Прибор 3
+    Edit8: TEdit;
+    Edit9: TEdit;
+    Edit10: TEdit; // Прибор 4
+    Edit11: TEdit;
+    Edit12: TEdit;
+    Edit13: TEdit; // Прибор 3, регистр 72
     procedure FormCreate(Sender: TObject);
+    procedure Timer1Timer(Sender: TObject);
   private
     { Private declarations }
-    ModbusClient: TModbusRTUClient; // Клиент Modbus RTU
-    procedure ReadModbusData;
-    function CRC16(const Data: array of Byte): Word; // Функция для проверки CRC16
+    function CalculateCRC(const Data: array of Byte; Len: Integer): Word;
+    function ReadRegisters(Address: Byte; StartReg: Word; RegCount: Word; var Data: array of Word): Boolean;
+    function ConvertToFloat(Reg1, Reg2: Word): Single;
   public
     { Public declarations }
   end;
@@ -36,108 +41,90 @@ implementation
 
 {$R *.dfm}
 
+// Инициализация COM-порта
 procedure TForm1.FormCreate(Sender: TObject);
 begin
-  // Инициализация Modbus клиента
-  ModbusClient := TModbusRTUClient.Create;
-  ModbusClient.ComPort := 'COM1'; // Укажите ваш COM-порт
-  ModbusClient.BaudRate := 9600;  // Скорость передачи
-  ModbusClient.Parity := 'N';     // Чётность
-  ModbusClient.DataBits := 8;     // Биты данных
-  ModbusClient.StopBits := 1;     // Стоп-биты
-
-  Timer1.Interval := 3000; // Опрос каждые 3 секунды
-  Timer1.Enabled := True;  // Запуск таймера
+  ComPort1.Port := 'COM1';
+  ComPort1.BaudRate := br9600;
+  ComPort1.DataBits := dbEight;
+  ComPort1.StopBits := sbOne;
+  ComPort1.Parity.Bits := prNone;
+  ComPort1.Open;
+  Timer1.Interval := 3000; // 3 секунды
 end;
 
-procedure TForm1.Timer1Timer(Sender: TObject);
-begin
-  ReadModbusData; // Опрос устройств
-end;
-
-procedure TForm1.ReadModbusData;
+// Преобразование двух регистров в IEEE 754 Float (Big-Endian)
+function TForm1.ConvertToFloat(Reg1, Reg2: Word): Single;
 var
-  i, j: Integer;
-  Address: Byte;
-  Registers: array[0..1] of Word;
-  CRC: Word;
-  Response: array of Byte;
+  LongWordVal: LongWord;
 begin
-  // Опрос 4 приборов
-  for i := 1 to 4 do
-  begin
-    Address := i; // Адрес прибора
-    // Чтение регистров 25-26, 27-28, 29-30
-    for j := 0 to 2 do
-    begin
-      if ModbusClient.ReadHoldingRegisters(Address, 25 + j * 2, 2, Registers) then
-      begin
-        // Проверка CRC
-        Response := ModbusClient.LastResponse;
-        CRC := CRC16(Response);
-        if CRC = 0 then // Если CRC верна
-        begin
-          // Вывод данных в Edit-поля
-          case i of
-            1:
-              begin
-                case j of
-                  0: Edit1.Text := IntToStr(Registers[0]);
-                  1: Edit2.Text := IntToStr(Registers[0]);
-                  2: Edit3.Text := IntToStr(Registers[0]);
-                end;
-              end;
-            2:
-              begin
-                case j of
-                  0: Edit4.Text := IntToStr(Registers[0]);
-                  1: Edit5.Text := IntToStr(Registers[0]);
-                  2: Edit6.Text := IntToStr(Registers[0]);
-                end;
-              end;
-            3:
-              begin
-                case j of
-                  0: Edit7.Text := IntToStr(Registers[0]);
-                  1: Edit8.Text := IntToStr(Registers[0]);
-                  2: Edit9.Text := IntToStr(Registers[0]);
-                end;
-              end;
-            4:
-              begin
-                case j of
-                  0: Edit10.Text := IntToStr(Registers[0]);
-                  1: Edit11.Text := IntToStr(Registers[0]);
-                  2: Edit12.Text := IntToStr(Registers[0]);
-                end;
-              end;
-          end;
-        end;
-      end;
-    end;
-  end;
-
-  // Чтение регистра 72 прибора 1
-  if ModbusClient.ReadHoldingRegisters(1, 72, 1, Registers) then
-  begin
-    Response := ModbusClient.LastResponse;
-    CRC := CRC16(Response);
-    if CRC = 0 then
-      Edit13.Text := IntToStr(Registers[0]);
-  end;
+  LongWordVal := (Reg1 shl 16) or Reg2;
+  Result := PSingle(@LongWordVal)^;
 end;
 
-function TForm1.CRC16(const Data: array of Byte): Word;
+// Функция чтения регистров
+function TForm1.ReadRegisters(Address: Byte; StartReg: Word; RegCount: Word; var Data: array of Word): Boolean;
+const
+  REQ_LEN = 8;
+  RESP_HEADER = 5;
+var
+  Request: array[0..7] of Byte;
+  Response: array[0..255] of Byte;
+  CRC, RecvCRC: Word;
+  i, RespLen: Integer;
+begin
+  Result := False;
+  FillChar(Data[0], Length(Data)*SizeOf(Word), 0);
+
+  // Формирование Modbus запроса
+  Request[0] := Address;
+  Request[1] := $03; // Функция чтения
+  Request[2] := Hi(StartReg);
+  Request[3] := Lo(StartReg);
+  Request[4] := Hi(RegCount);
+  Request[5] := Lo(RegCount);
+
+  // Расчет CRC
+  CRC := CalculateCRC(Request, 6);
+  Request[6] := Lo(CRC);
+  Request[7] := Hi(CRC);
+
+  // Очистка буферов
+  ComPort1.ClearBuffer(True, True);
+
+  // Отправка запроса
+  ComPort1.Write(Request, REQ_LEN);
+
+  // Ожидание ответа (500 мс)
+  Sleep(500);
+  RespLen := ComPort1.InputCount;
+  if RespLen < (RESP_HEADER + RegCount*2) then Exit;
+
+  // Чтение ответа
+  ComPort1.Read(Response, RespLen);
+
+  // Проверка CRC
+  RecvCRC := CalculateCRC(Response, RespLen - 2);
+  if (Response[RespLen-2] <> Lo(RecvCRC)) or 
+     (Response[RespLen-1] <> Hi(RecvCRC)) then Exit;
+
+  // Извлечение данных
+  for i := 0 to RegCount - 1 do
+    Data[i] := (Response[3 + i*2] shl 8) or Response[4 + i*2];
+
+  Result := True;
+end;
+
+// Расчет CRC16 Modbus
+function TForm1.CalculateCRC(const Data: array of Byte; Len: Integer): Word;
 var
   i, j: Integer;
   CRC: Word;
 begin
   CRC := $FFFF;
-  for i := 0 to High(Data) do
-  begin
+  for i := 0 to Len - 1 do begin
     CRC := CRC xor Data[i];
-    for j := 0 to 7 do
-    begin
+    for j := 0 to 7 do begin
       if (CRC and $0001) <> 0 then
         CRC := (CRC shr 1) xor $A001
       else
@@ -145,6 +132,33 @@ begin
     end;
   end;
   Result := CRC;
+end;
+
+// Обработка таймера
+procedure TForm1.Timer1Timer(Sender: TObject);
+var
+  Device, Channel: Integer;
+  RegData: array[0..1] of Word;
+  FloatValue: Single;
+  EditIndex: Integer;
+begin
+  for Device := 1 to 4 do begin
+    for Channel := 0 to 2 do begin
+      if ReadRegisters(Device, 25 + Channel*2, 2, RegData) then begin
+        // Преобразование в Float
+        FloatValue := ConvertToFloat(RegData[0], RegData[1]);
+        
+        // Определение Edit-поля
+        EditIndex := (Device - 1)*3 + Channel;
+        if EditIndex < 12 then
+          TEdit(FindComponent('Edit' + IntToStr(EditIndex + 1))).Text := FormatFloat('0.000', FloatValue);
+      end;
+    end;
+  end;
+
+  // Чтение специального регистра 72 прибора 3
+  if ReadRegisters(3, 72, 1, RegData) then
+    Edit13.Text := IntToStr(RegData[0]);
 end;
 
 end.
