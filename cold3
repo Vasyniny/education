@@ -1,0 +1,171 @@
+unit MainUnit;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, CPort, ExtCtrls;
+
+type
+  TForm1 = class(TForm)
+    ComPort1: TComPort;
+    Timer1: TTimer;
+    Edit1: TEdit;  // Прибор1: 25-26,27-28,29-30
+    Edit2: TEdit;
+    Edit3: TEdit;
+    Edit4: TEdit;  // Прибор2
+    Edit5: TEdit;
+    Edit6: TEdit;
+    Edit7: TEdit;  // Прибор3
+    Edit8: TEdit;
+    Edit9: TEdit;
+    Edit10: TEdit; // Прибор4
+    Edit11: TEdit;
+    Edit12: TEdit;
+    Edit13: TEdit; // Прибор3, регистр72
+    procedure FormCreate(Sender: TObject);
+    procedure Timer1Timer(Sender: TObject);
+  private
+    { Private declarations }
+    function CalculateCRC(const Data: array of Byte; Len: Integer): Word;
+    function ReadHoldingRegisters(Address: Byte; StartReg: Word; RegCount: Word; var Data: array of Word): Boolean;
+    function BytesToFloat(HighWord, LowWord: Word): Single;
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+// Инициализация COM-порта
+procedure TForm1.FormCreate(Sender: TObject);
+begin
+  ComPort1.Port := 'COM1';
+  ComPort1.BaudRate := br9600;
+  ComPort1.DataBits := dbEight;
+  ComPort1.StopBits := sbOne;
+  ComPort1.Parity.Bits := prNone;
+  ComPort1.Open;
+  Timer1.Interval := 3000;
+end;
+
+// Преобразование двух слов в IEEE 754 Float
+function TForm1.BytesToFloat(HighWord, LowWord: Word): Single;
+var
+  LongWordValue: LongWord;
+begin
+  LongWordValue := (HighWord shl 16) or LowWord;
+  Result := PSingle(@LongWordValue)^;
+end;
+
+// Чтение регистров с проверкой CRC
+function TForm1.ReadHoldingRegisters(Address: Byte; StartReg: Word; RegCount: Word; var Data: array of Word): Boolean;
+const
+  REQ_LEN = 8;
+  RESP_HEADER = 5;
+var
+  Request: array[0..7] of Byte;
+  Response: array[0..255] of Byte;
+  CRC, RecvCRC: Word;
+  i, RespLen: Integer;
+begin
+  Result := False;
+  
+  // Формирование запроса
+  Request[0] := Address;
+  Request[1] := $03;
+  Request[2] := Hi(StartReg);
+  Request[3] := Lo(StartReg);
+  Request[4] := Hi(RegCount);
+  Request[5] := Lo(RegCount);
+  
+  // Расчет CRC
+  CRC := CalculateCRC(Request, 6);
+  Request[6] := Lo(CRC);
+  Request[7] := Hi(CRC);
+
+  // Очистка буфера
+  ComPort1.ClearBuffer(True, True);
+  
+  // Отправка запроса
+  ComPort1.Write(Request, REQ_LEN);
+  
+  // Ожидание ответа (500 мс)
+  Sleep(500);
+  RespLen := ComPort1.InputCount;
+  if RespLen < RESP_HEADER + RegCount*2 then Exit;
+  
+  // Чтение ответа
+  ComPort1.Read(Response, RespLen);
+  
+  // Проверка CRC
+  RecvCRC := CalculateCRC(Response, RespLen - 2);
+  if (Lo(RecvCRC) <> Response[RespLen-2]) or
+     (Hi(RecvCRC) <> Response[RespLen-1]) then Exit;
+
+  // Извлечение данных (Big-Endian)
+  for i := 0 to RegCount - 1 do
+    Data[i] := (Response[3 + i*2] shl 8) or Response[4 + i*2];
+
+  Result := True;
+end;
+
+// Расчет CRC16 Modbus
+function TForm1.CalculateCRC(const Data: array of Byte; Len: Integer): Word;
+var
+  i, j: Integer;
+  CRC: Word;
+begin
+  CRC := $FFFF;
+  for i := 0 to Len - 1 do
+  begin
+    CRC := CRC xor Data[i];
+    for j := 0 to 7 do
+    begin
+      if (CRC and $0001) <> 0 then
+        CRC := (CRC shr 1) xor $A001
+      else
+        CRC := CRC shr 1;
+    end;
+  end;
+  Result := CRC;
+end;
+
+// Обработчик таймера
+procedure TForm1.Timer1Timer(Sender: TObject);
+var
+  Device, Channel: Integer;
+  Registers: array[0..1] of Word;
+  FloatValue: Single;
+begin
+  // Опрос основных приборов (1-4)
+  for Device := 1 to 4 do
+  begin
+    for Channel := 0 to 2 do
+    begin
+      if ReadHoldingRegisters(Device, 25 + Channel*2, 2, Registers) then
+      begin
+        // Преобразование в IEEE 754 Float
+        FloatValue := BytesToFloat(Registers[0], Registers[1]);
+        
+        // Обновление Edit-полей
+        case Device of
+          1: TEdit(FindComponent('Edit' + IntToStr(Channel + 1)).Text := FormatFloat('0.00', FloatValue);
+          2: TEdit(FindComponent('Edit' + IntToStr(Channel + 4)).Text := FormatFloat('0.00', FloatValue);
+          3: TEdit(FindComponent('Edit' + IntToStr(Channel + 7)).Text := FormatFloat('0.00', FloatValue);
+          4: TEdit(FindComponent('Edit' + IntToStr(Channel + 10)).Text := FormatFloat('0.00', FloatValue);
+        end;
+      end;
+    end;
+  end;
+
+  // Чтение специального регистра 72 прибора 3
+  if ReadHoldingRegisters(3, 72, 1, Registers) then
+    Edit13.Text := IntToStr(Registers[0]);
+end;
+
+end.
