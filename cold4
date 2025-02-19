@@ -1,0 +1,188 @@
+unit MainUnit;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  StdCtrls, CPort, ExtCtrls;
+
+type
+  TForm1 = class(TForm)
+    ComPort1: TComPort;
+    Timer1: TTimer;
+    Edit1: TEdit; Edit2: TEdit; Edit3: TEdit; Edit4: TEdit; Edit5: TEdit;
+    Edit6: TEdit; Edit7: TEdit; Edit8: TEdit; Edit9: TEdit; Edit10: TEdit;
+    Edit11: TEdit; Edit12: TEdit; Edit13: TEdit;
+    procedure Timer1Timer(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure ComPort1TxEmpty(Sender: TObject);
+    procedure ComPort1RxChar(Sender: TObject; Count: Integer);
+  private
+    FEditArray: array[0..11] of TEdit;
+    FCurrentDevice: Byte;
+    FRequestSent: Boolean;
+    FResponse: array[0..255] of Byte;
+    FBytesRead: Integer;
+    
+    function CalculateCRC16(const Data: array of Byte; Len: Integer): Word;
+    function BytesToFloat(HiReg, LoReg: Word): Single;
+    procedure SendRequest(DeviceAddress: Byte);
+    procedure ProcessResponse(DeviceAddress: Byte);
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.dfm}
+
+const
+  REGISTER_START = 25;
+  REGISTER_COUNT = 6;
+  RESPONSE_TIMEOUT = 1000;
+
+procedure TForm1.FormCreate(Sender: TObject);
+var
+  i: Integer;
+begin
+  FEditArray[0] := Edit1;
+  FEditArray[1] := Edit2;
+  FEditArray[2] := Edit3;
+  FEditArray[3] := Edit4;
+  FEditArray[4] := Edit5;
+  FEditArray[5] := Edit6;
+  FEditArray[6] := Edit7;
+  FEditArray[7] := Edit8;
+  FEditArray[8] := Edit9;
+  FEditArray[9] := Edit10;
+  FEditArray[10] := Edit11;
+  FEditArray[11] := Edit12;
+
+  FCurrentDevice := 0;
+  FRequestSent := False;
+  Timer1.Interval := 3000;
+end;
+
+function TForm1.CalculateCRC16(const Data: array of Byte; Len: Integer): Word;
+var
+  i, j: Integer;
+  crc: Word;
+begin
+  crc := $FFFF;
+  for i := 0 to Len-1 do
+  begin
+    crc := crc xor Data[i];
+    for j := 0 to 7 do
+    begin
+      if (crc and $0001) <> 0 then
+        crc := (crc shr 1) xor $A001
+      else
+        crc := crc shr 1;
+    end;
+  end;
+  Result := crc;
+end;
+
+function TForm1.BytesToFloat(HiReg, LoReg: Word): Single;
+var
+  Bytes: array[0..3] of Byte absolute HiReg;
+begin
+  // Swap bytes for Big-Endian to Little-Endian conversion
+  Bytes[0] := Hi(HiReg);
+  Bytes[1] := Lo(HiReg);
+  Bytes[2] := Hi(LoReg);
+  Bytes[3] := Lo(LoReg);
+  Result := PSingle(@Bytes)^;
+end;
+
+procedure TForm1.SendRequest(DeviceAddress: Byte);
+var
+  Request: array[0..7] of Byte;
+  CRC: Word;
+begin
+  Request[0] := DeviceAddress;
+  Request[1] := $03; // Function code Read Holding Registers
+  Request[2] := Hi(REGISTER_START);
+  Request[3] := Lo(REGISTER_START);
+  Request[4] := Hi(REGISTER_COUNT);
+  Request[5] := Lo(REGISTER_COUNT);
+  
+  CRC := CalculateCRC16(Request, 6);
+  Request[6] := Lo(CRC);
+  Request[7] := Hi(CRC);
+
+  ComPort1.ClearBuffer(True, True);
+  ComPort1.Write(Request, SizeOf(Request));
+  FRequestSent := True;
+end;
+
+procedure TForm1.ProcessResponse(DeviceAddress: Byte);
+var
+  CRC, ReceivedCRC: Word;
+  i, DataIndex: Integer;
+  Values: array[0..2] of Single;
+begin
+  if FBytesRead < 17 then
+  begin
+    Edit13.Text := 'Invalid response length';
+    Exit;
+  end;
+
+  // Check CRC
+  ReceivedCRC := FResponse[FBytesRead - 2] or (FResponse[FBytesRead - 1] shl 8);
+  CRC := CalculateCRC16(FResponse, FBytesRead - 2);
+  
+  if CRC <> ReceivedCRC then
+  begin
+    Edit13.Text := Format('CRC error Device %d', [DeviceAddress]);
+    Exit;
+  end;
+
+  // Parse data (6 registers = 3 float values)
+  for i := 0 to 2 do
+  begin
+    DataIndex := 3 + i*4;
+    Values[i] := BytesToFloat(
+      (FResponse[DataIndex] shl 8) or FResponse[DataIndex + 1],
+      (FResponse[DataIndex + 2] shl 8) or FResponse[DataIndex + 3]
+    );
+  end;
+
+  // Update UI
+  for i := 0 to 2 do
+    FEditArray[(DeviceAddress-1)*3 + i].Text := FormatFloat('0.000', Values[i]);
+end;
+
+procedure TForm1.ComPort1RxChar(Sender: TObject; Count: Integer);
+begin
+  FBytesRead := ComPort1.Read(FResponse, SizeOf(FResponse));
+  FRequestSent := False;
+  
+  if (FResponse[0] = FCurrentDevice) and (FResponse[1] = $03) then
+    ProcessResponse(FCurrentDevice)
+  else
+    Edit13.Text := 'Invalid response header';
+end;
+
+procedure TForm1.ComPort1TxEmpty(Sender: TObject);
+begin
+  if (FCurrentDevice > 0) and not FRequestSent then
+  begin
+    SendRequest(FCurrentDevice);
+    FCurrentDevice := FCurrentDevice mod 4 + 1;
+  end;
+end;
+
+procedure TForm1.Timer1Timer(Sender: TObject);
+begin
+  if not ComPort1.Connected then
+    ComPort1.Connected := True;
+
+  if not FRequestSent then
+    FCurrentDevice := 1; // Start polling cycle
+end;
+
+end.
