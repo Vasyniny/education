@@ -105,3 +105,50 @@ begin
   UpdateEnergyCounters(APos);
   prEditModel := False;
 end;
+
+
+
+
+
+
+////////////////////
+
+Добавить обработку исключений:
+
+pascal
+Copy
+try
+  // Код работы с БД
+except
+  on E: EDatabaseError do
+    ShowErrorMessage('Ошибка базы данных: ' + E.Message);
+end;
+Реализовать кэширование данных:
+
+pascal
+Copy
+TExperimentCache = record
+  Kod: string;
+  LastUpdate: TDateTime;
+  Params: TExperimentParams;
+end;
+Использовать перечисления для состояний:
+
+pascal
+Copy
+TExperimentState = (esStopped, esRunning, esPaused, esCompleted);
+Добавить логирование операций:
+
+pascal
+Copy
+procedure LogEvent(const AEvent: string);
+begin
+  WriteToLogFile(FormatDateTime('dd.mm.yyyy hh:nn:ss', Now) + ' - ' + AEvent);
+end;
+
+
+
+
+
+
+
