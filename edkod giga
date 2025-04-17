@@ -1,0 +1,127 @@
+procedure TfMain.edKodKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+var
+  Kod, OldKod: string;
+  N: integer;
+  TM: TDateTime;
+  HH, MM, SS, MS: word;
+  CompLabel: TLabel;
+  CompEdit: TJvEdit;
+begin
+  if Key <> VK_RETURN then Exit;
+
+  CompLabel := TLabel(FindComponent('lChTm_' + IntToStr(nPos)));
+  CompEdit := TJvEdit(FindComponent('edKod_' + IntToStr(nPos)));
+
+  CompLabel.Visible := false;
+  Kod := Copy(CompEdit.Text, 1, 3);
+
+  if Kod = '' then
+  begin
+    ClearComponent(nPos);
+    prEditModel := false;
+    curKod := '';
+    Exit;
+  end;
+
+  OldKod := copy(curKod, 1, 3);
+
+  if OldKod = Kod then
+  begin
+    CompEdit.Color := clWindow;
+    CompEdit.ReadOnly := true;
+    prEditModel := false;
+    Exit;
+  end;
+
+  // Код изменился или введен впервые
+  DataInRecords(nPos);
+  flParams[nPos] := false;
+  dm.spXP.Close;
+  dm.spXP.Open;
+
+  if not dm.spXP.Locate('kod', Kod, [loCaseInsensitive]) then
+  begin
+    MessageDlgPos('В перечне отсутствует ХП с указанным кодом.', mtWarning, [mbOK], 0, fMain.Left + 250, fMain.Top + 350);
+    if prEditModel then ReturnPrevCode;
+    Exit;
+  end;
+
+  if flParams[nPos] then Exit;
+
+  ParamsXP(nPos, true);
+
+  if flParams[nPos] then
+  begin
+    if TypeXP[nPos] = 'ак' then
+    begin
+      MessageDlgPos('Холодильники Камаз не испытываются!', mtWarning, [mbOK], 0, fMain.Left + 250, fMain.Top + 350);
+      if prEditModel then ReturnPrevCode
+      else ClearComponent(nPos);
+      Exit;
+    end;
+
+    CompEdit.Color := clWindow;
+    CompEdit.ReadOnly := true;
+    Data[nPos].kodXP := CompEdit.Text;
+
+    if chMetod[nPos] <> 'FnF' then
+    begin
+      if flOnCmp[nPos] and (numOnCmp[nPos] = 0) then
+        inc(numOnCmp[nPos]);
+    end
+    else
+    begin
+      if flOnCmp[nPos] and (numOnCmp[nPos] > 0) then
+      begin
+        dec(numOnCmp[nPos]);
+        flWork1[nPos] := true;
+        tmOnWork1[nPos] := Now;
+      end;
+    end;
+
+    TM := Now - tmStart[nPos];
+    DecodeTime(TM, HH, MM, SS, MS);
+    MMCur[nPos] := 60 * HH + MM;
+
+    if (prEditModel) and (
+        ((not bgChTm[nPos]) and (MMCur[nPos] > TimeIsp[nPos] - CheckTime[nPos, 1]))
+     or ((bgChTm[nPos]) and (MMCur[nPos] > 1))
+    ) then
+    begin
+      ReturnPrevCode;
+      MessageDlgPos('Нельзя изменить код - пропущено начало контрольного времени!',
+                    mtWarning, [mbOK], 0, fMain.Left + 250, fMain.Top + 350);
+      Exit;
+    end;
+
+    if ((not bgChTm[nPos]) and (MMCur[nPos] >= TimeIsp[nPos] - CheckTime[nPos, 1]))
+    or ((bgChTm[nPos]) and (MMCur[nPos] <= CheckTime[nPos, 1])) then
+      CompLabel.Visible := true
+    else
+      CompLabel.Visible := false;
+
+    if bgChTm[nPos] and (bgnTokr[nPos] = 0) then
+    begin
+      bgnTokr[nPos] := Tokr;
+      TmrPerW[nPos, 1] := Now;
+      TmrPerW[nPos, 2] := TmrPerW[nPos, 1];
+      curWch[nPos] := 0;
+    end;
+
+    if not bgChTm[nPos] then
+    begin
+      if MMCur[nPos] < TimeIsp[nPos] - CheckTime[nPos, 1] then
+      begin
+        bgnTokr[nPos] := 0;
+        curWch[nPos] := 0;
+      end
+      else
+      begin
+        bgnTokr[nPos] := Tokr;
+        curWch[nPos] := 0;
+      end;
+    end;
+
+    prEditModel := false;
+  end;
+end;
