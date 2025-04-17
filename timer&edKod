@@ -1,0 +1,139 @@
+// Общий модуль для работы с компонентами
+unit ComponentUtils;
+
+interface
+
+uses
+  JvEdit, JvXPButton, ExtCtrls, StdCtrls;
+
+procedure SetEditState(AEdit: TJvEdit; AEnabled: Boolean; AColor: TColor);
+procedure UpdateButtonGlyph(ABtn: TJvXPButton; const AImagePath: string);
+procedure UpdateLabelVisibility(ALabel: TLabel; AVisible: Boolean);
+
+implementation
+
+procedure SetEditState(AEdit: TJvEdit; AEnabled: Boolean; AColor: TColor);
+begin
+  if Assigned(AEdit) then
+  begin
+    AEdit.Enabled := AEnabled;
+    AEdit.Color := AColor;
+    AEdit.ReadOnly := not AEnabled;
+  end;
+end;
+
+procedure UpdateButtonGlyph(ABtn: TJvXPButton; const AImagePath: string);
+begin
+  if Assigned(ABtn) and FileExists(AImagePath) then
+    ABtn.Glyph.LoadFromFile(AImagePath);
+end;
+
+procedure UpdateLabelVisibility(ALabel: TLabel; AVisible: Boolean);
+begin
+  if Assigned(ALabel) then
+    ALabel.Visible := AVisible;
+end;
+
+end.
+
+// Основной модуль
+procedure TfMain.edKodKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if Key = VK_RETURN then
+    HandleCodeInput(TJvEdit(Sender));
+end;
+
+procedure TfMain.HandleCodeInput(AEdit: TJvEdit);
+var
+  sKod, sOldKod: string;
+  nPos: Integer;
+begin
+  nPos := ExtractPosition(AEdit.Name);
+  sKod := Copy(AEdit.Text, 1, 3);
+
+  if sKod = '' then
+  begin
+    HandleEmptyCode(nPos);
+    Exit;
+  end;
+
+  sOldKod := Copy(curKod, 1, 3);
+  if sOldKod = sKod then
+  begin
+    SetEditState(AEdit, False, clWindow);
+    Exit;
+  end;
+
+  ProcessCodeChange(nPos, sKod, AEdit);
+end;
+
+procedure TfMain.TmrIspTimer(Sender: TObject);
+var
+  i: Integer;
+begin
+  lTime.Caption := TimeToStr(Now);
+  
+  for i := 1 to 12 do
+  begin
+    case StatePos[i] of
+      0: HandleState0(i);
+      1: HandleState1(i);
+      2: HandleState2(i);
+      3: HandleState3(i);
+    end;
+  end;
+end;
+
+procedure TfMain.HandleState0(Pos: Integer);
+var
+  edKod: TJvEdit;
+begin
+  edKod := TJvEdit(FindComponent('edKod_' + IntToStr(Pos)));
+  if valW[Pos] >= UstW then
+  begin
+    if NumVal[Pos] < 3 then
+    begin
+      Inc(NumVal[Pos]);
+      SetLength(arrW[Pos], NumVal[Pos]);
+      arrW[Pos, NumVal[Pos]-1] := valW[Pos];
+    end;
+  end
+  else
+  begin
+    NumVal[Pos] := 0;
+    SetLength(arrW[Pos], 0);
+  end;
+
+  if NumVal[Pos] = 3 then
+  begin
+    InitializeExperiment(Pos);
+    WriteDataInArr(Pos);
+    WriteDataInFile(Pos);
+  end;
+end;
+
+procedure TfMain.InitializeExperiment(Pos: Integer);
+var
+  edKod: TJvEdit;
+  lblModel: TLabel;
+  btnState: TJvXPButton;
+begin
+  edKod := TJvEdit(FindComponent('edKod_' + IntToStr(Pos)));
+  lblModel := TLabel(FindComponent('lModel_' + IntToStr(Pos)));
+  btnState := TJvXPButton(FindComponent('BtnState_' + IntToStr(Pos)));
+
+  if not flParams[Pos] then
+    SetEditState(edKod, True, clYellow);
+
+  lblModel.Enabled := True;
+  UpdateButtonGlyph(btnState, MyDir + 'Img\Green.bmp');
+  TPanel(FindComponent('pCycl_' + IntToStr(Pos))).Caption := '0';
+
+  StatePos[Pos] := 1;
+  flOnCmp[Pos] := True;
+  Inc(numOnCmp[Pos]);
+  tmStart[Pos] := Now;
+  bgnTokr[Pos] := Tokr;
+  TmrPerW[Pos, 1] := Now;
+  TmrPerW[Pos, 2] := Now;
+end;
