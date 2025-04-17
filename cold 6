@@ -1,0 +1,107 @@
+procedure TfMain.edKodKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+const
+  WARNING_OFFSET_X = 250; // Константы для позиционирования сообщений
+  WARNING_OFFSET_Y = 350;
+var
+  sKod, sOldKod: string;
+  tmWork: TDateTime;
+begin
+  if Key <> VK_RETURN then Exit;
+
+  // 1. Кэширование компонентов
+  with TLabel(FindComponent('lChTm_' + IntToStr(nPos))) do Visible := False;
+  with TJvEdit(FindComponent('edKod_' + IntToStr(nPos))) do
+  begin
+    sKod := Copy(Text, 1, 3);
+    
+    // 2. Вынесение проверок в отдельные методы
+    if not ValidateKodInput(sKod) then Exit;
+    
+    // 3. Обработка повторного ввода кода
+    sOldKod := Copy(curKod, 1, 3);
+    if sOldKod = sKod then
+    begin
+      SetEditState(Self, False);
+      Exit;
+    end;
+
+    // 4. Обновление данных
+    UpdateExperimentData(nPos, sKod);
+    
+    // 5. Управление временными параметрами
+    tmWork := Now - tmStart[nPos];
+    UpdateTimeParameters(nPos, tmWork);
+    
+    // 6. Обновление UI
+    UpdateUIComponents(nPos);
+  end;
+end;
+
+// Валидация ввода
+function TfMain.ValidateKodInput(const AKod: string): Boolean;
+begin
+  Result := False;
+  if AKod = '' then
+  begin
+    ClearComponent(nPos);
+    prEditModel := False;
+    curKod := '';
+    Exit;
+  end;
+  Result := True;
+end;
+
+// Обновление данных эксперимента
+procedure TfMain.UpdateExperimentData(APos: Integer; const AKod: string);
+begin
+  DataInRecords(APos);
+  flParams[APos] := False;
+  
+  with dm.spXP do
+  begin
+    Close;
+    Open;
+    if not Locate('kod', AKod, [loCaseInsensitive]) then
+    begin
+      ShowWarningMessage('В перечне отсутствует ХП с указанным кодом.');
+      if prEditModel then ReturnPrevCode;
+      Exit;
+    end;
+
+    ParamsXP(APos, True);
+    if not flParams[APos] then Exit;
+
+    if IsKamazType(APos) then
+    begin
+      ShowWarningMessage('Холодильники Камаз не испытываются!');
+      if prEditModel then ReturnPrevCode else ClearComponent(APos);
+      Exit;
+    end;
+  end;
+end;
+
+// Обновление временных параметров
+procedure TfMain.UpdateTimeParameters(APos: Integer; AWorkTime: TDateTime);
+var
+  hh, mm, ss, ms: Word;
+begin
+  DecodeTime(AWorkTime, hh, mm, ss, ms);
+  mmCur[APos] := 60 * hh + mm;
+
+  if IsEditTimeInvalid(APos) then
+  begin
+    ReturnPrevCode;
+    ShowWarningMessage('Нельзя изменить код - пропущено начало контрольного времени!');
+    Exit;
+  end;
+end;
+
+// Обновление UI компонентов
+procedure TfMain.UpdateUIComponents(APos: Integer);
+begin
+  with TLabel(FindComponent('lChTm_' + IntToStr(APos))) do
+    Visible := ShouldShowTimeWarning(APos);
+
+  UpdateEnergyCounters(APos);
+  prEditModel := False;
+end;
