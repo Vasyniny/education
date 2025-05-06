@@ -1,0 +1,156 @@
+procedure HandleSelectedModel(i: Integer);
+var
+  k: Integer;
+begin
+  // 1. Управление индикатором контрольного времени ("K")
+  UpdateCheckTimeIndicator(i);
+
+  // 2. Инициализация контрольного времени
+  InitializeCheckTime(i);
+
+  // 3. Определение режима оттайки (для Full No Frost)
+  DefinedOttaika(i);
+
+  // 4. Контроль работы компрессора
+  MonitorCompressorOperation(i);
+
+  // 5. Проверка завершения контрольного времени
+  if CheckEndOfCheckTime(i) then
+  begin
+    ProcessEndOfCheckTime(i);
+    Exit;
+  end;
+
+  // 6. Проверка завершения всего испытания
+  if CheckEndOfTest(i) then
+  begin
+    FinalizeTest(i);
+  end;
+end;
+
+// Обновление индикатора контрольного времени
+procedure UpdateCheckTimeIndicator(i: Integer);
+begin
+  if bgChTm[i] then
+  begin
+    // Метод "End" - контрольное время в начале испытания
+    if dm.spXP['Method'] = 'End' then
+    begin
+      if mmCur[i] <= CheckTime[i, nCheckPoint[i]] then
+        SetLabelVisibility('lChTm_'+IntToStr(i), True)  // Показываем "K"
+      else
+        SetLabelVisibility('lChTm_'+IntToStr(i), False); // Скрываем "K"
+    end
+    // Метод "Off" - контрольное время до первого отключения
+    else if dm.spXP['Method'] = 'Off' then
+    begin
+      if numOffCmp[i] = 0 then
+      begin
+        if mmCur[i] <= CheckTime[i, nCheckPoint[i]] then
+          SetLabelVisibility('lChTm_'+IntToStr(i), True)
+        else
+          SetLabelVisibility('lChTm_'+IntToStr(i), False);
+      end
+      else
+        SetLabelVisibility('lChTm_'+IntToStr(i), False);
+    end;
+  end
+  else
+  begin
+    // Контрольное время в конце испытания
+    if dm.spXP['Method'] = 'End' then
+    begin
+      if (mmCur[i] > (TimeIsp[i]-CheckTime[i,nCheckPoint[i]])) and 
+         (mmCur[i] < TimeIsp[i]) then
+        SetLabelVisibility('lChTm_'+IntToStr(i), True);
+    end
+    else
+    begin
+      if numOffCmp[i] = 0 then
+      begin
+        if (mmCur[i] > (TimeIsp[i]-CheckTime[i,nCheckPoint[i]])) and 
+           (mmCur[i] < TimeIsp[i]) then
+          SetLabelVisibility('lChTm_'+IntToStr(i), True);
+      end
+      else
+        SetLabelVisibility('lChTm_'+IntToStr(i), False);
+    end;
+  end;
+end;
+
+// Инициализация контрольного времени
+procedure InitializeCheckTime(i: Integer);
+begin
+  if ((bgChTm[i]) or ((not bgChTm[i]) and (mmCur[i] = TimeIsp[i]-CheckTime[i,nCheckPoint[i]]))) and 
+     (bgnTokr[i] = 0) then
+  begin
+    bgnTokr[i] := Tokr;
+    bgnWch[i] := curWch[i];
+    SetLabelVisibility('lChTm_'+IntToStr(i), True);
+  end;
+end;
+
+// Мониторинг работы компрессора
+procedure MonitorCompressorOperation(i: Integer);
+begin
+  // Проверка включения компрессора
+  if ((not flOnCmp[i]) or (numOnCmp[i] = numOffCmp[i])) and
+     ((chMetod[i] <> 'FnF') or ((chMetod[i] = 'FnF') and flWork2[i])) and
+     ((arrW[i,NumVal[i]-1] - arrW[i,NumVal[i]-3]) > UstW) then
+  begin
+    Inc(numOnCmp[i]);
+    SetButtonGlyph('BtnState_' + IntToStr(i), 'Green.bmp');
+  end;
+
+  // Проверка отключения компрессора
+  if (numOnCmp[i] > numOffCmp[i]) and
+     ((chMetod[i] <> 'FnF') or ((chMetod[i] = 'FnF') and flWork2[i])) and
+     ((arrW[i,NumVal[i]-3] - arrW[i,NumVal[i]-1]) > UstW) and
+     (arrW[i,NumVal[i]-1] < UstW) and (arrW[i,NumVal[i]-2] < UstW) then
+  begin
+    Inc(numOffCmp[i]);
+    SetPanelCaption('pCycl_'+IntToStr(i), IntToStr(numOffCmp[i]));
+    SetButtonGlyph('BtnState_' + IntToStr(i), 'Yellow.bmp');
+
+    // Обработка первого отключения
+    if numOffCmp[i] = 1 then
+    begin
+      wCmp[i] := true; 
+      ttCmp[i] := true; 
+      TimeOffCmp[i] := Now - tmStart[i];
+      
+      if chMetod[i] = 'End' then
+      begin
+        if flW[i,nCheckPoint[i]] then
+        begin
+          ttW[i,nCheckPoint[i]] := arrW[i,NumVal[i]-3];
+          nChW[i,nCheckPoint[i]] := NumVal[i]-3;
+          CheckParamWatt(i, nCheckPoint[i]);
+        end;
+      end
+      else if endTokr[i,nCheckPoint[i]] = 0 then
+      begin
+        endTokr[i,nCheckPoint[i]] := Tokr;
+        SaveParamIsp(i);
+        ParamIspInScreen(i, nCheckPoint[i]);
+      end;
+    end;
+  end;
+end;
+
+// Вспомогательные методы
+procedure SetLabelVisibility(const AName: string; AVisible: Boolean);
+begin
+  with TLabel(FindComponent(AName)) do Visible := AVisible;
+end;
+
+procedure SetButtonGlyph(const AName, AGlyphFile: string);
+begin
+  with TJvXPButton(FindComponent(AName)) do 
+    Glyph.LoadFromFile(MyDir + 'Img\' + AGlyphFile);
+end;
+
+procedure SetPanelCaption(const AName, ACaption: string);
+begin
+  with TPanel(FindComponent(AName)) do Caption := ACaption;
+end;
