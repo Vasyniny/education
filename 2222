@@ -1,0 +1,98 @@
+// Основной обработчик состояния 1
+procedure TfMain.ProcessState1(i: Integer);
+var
+  hh, mm: Word;
+begin
+  UpdateTestTimeDisplay(i); // Обновление времени
+  WriteTestData(i); // Запись данных
+  HandleCompressorLogic(i); // Логика работы компрессора
+  HandleControlPoints(i); // Работа с контрольными точками
+  CheckTestCompletion(i); // Проверка завершения теста
+end;
+
+// 1. Обновление отображения времени
+procedure TfMain.UpdateTestTimeDisplay(i: Integer);
+var
+  tm: TDateTime;
+  hh, mm, ss, ms: Word;
+  st: string;
+begin
+  tm := Now - tmStart[i];
+  DecodeTime(tm, hh, mm, ss, ms);
+  mmCur[i] := 60 * hh + mm;
+  
+  if TimeIsp[i] > 200 then
+    st := Format('%.2d:%.2d', [hh, mm])
+  else
+    st := IntToStr(mmCur[i]);
+    
+  GetPanel(i).Caption := st;
+end;
+
+// 2. Логика работы компрессора
+procedure TfMain.HandleCompressorLogic(i: Integer);
+begin
+  if not flParams[i] then
+  begin
+    HandleBasicCompressorCycles(i);
+    Exit;
+  end;
+  
+  HandleAdvancedCompressorCycles(i);
+  HandleDefrostCycles(i);
+end;
+
+// 3. Обработка контрольных точек
+procedure TfMain.HandleControlPoints(i: Integer);
+begin
+  UpdateControlTimeIndicator(i);
+  
+  if ShouldSaveCheckpointData(i) then
+  begin
+    SaveCheckpointData(i);
+    MoveToNextCheckpoint(i);
+  end;
+end;
+
+// 4. Проверка завершения теста
+procedure TfMain.CheckTestCompletion(i: Integer);
+begin
+  if (mmCur[i] >= TimeIsp[i]) or 
+     (IsEarlyCompletionConditionMet(i)) then
+  begin
+    FinalizeTest(i);
+    PrepareForDataInput(i);
+  end;
+end;
+
+// Вспомогательные методы
+function TfMain.GetPanel(i: Integer): TPanel;
+begin
+  Result := TPanel(FindComponent('pCurTime_' + IntToStr(i)));
+end;
+
+procedure TfMain.HandleBasicCompressorCycles(i: Integer);
+begin
+  // Логика для невыбранной модели
+  if (numOnCmp[i] = numOffCmp[i]) and 
+     (arrW[i,NumVal[i]-1] - arrW[i,NumVal[i]-2] > UstW) then
+  begin
+    Inc(numOnCmp[i]);
+    UpdateButtonState(i, 'Green');
+  end;
+
+  if (numOnCmp[i] > numOffCmp[i]) and 
+     (arrW[i,NumVal[i]-1] < UstW) and 
+     (arrW[i,NumVal[i]-2] < UstW) then
+  begin
+    Inc(numOffCmp[i]);
+    UpdateCycleCounter(i);
+    UpdateButtonState(i, 'Yellow');
+  end;
+end;
+
+procedure TfMain.UpdateButtonState(i: Integer; Color: string);
+begin
+  with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do 
+    Glyph.LoadFromFile(MyDir + 'Img\' + Color + '.bmp');
+end;
