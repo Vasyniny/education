@@ -1,0 +1,201 @@
+// Константы для состояний испытания
+const
+  STATE_WAITING = 2;
+  STATE_COMPLETED = 3;
+  COMPRESSOR_OFF_THRESHOLD = 3;
+
+procedure TfMain.HandleTestCompletionChecks(i: Integer);
+var
+  AllParamsReady: Boolean;
+  nPoint: Integer;
+  k: Integer;
+  BlockXKReady, BlockMKReady: Boolean;
+begin
+  // Контроль отключения компрессора
+  MonitorCompressorShutdown(i);
+
+  // Проверка готовности всех параметров
+  nPoint := definePoint(i);
+  AllParamsReady := CheckAllParametersReady(i, nPoint);
+
+  if not AllParamsReady then
+  begin
+    HandleMissingParameters(i, nPoint);
+  end
+  else
+  begin
+    ProcessTestCompletion(i, nPoint);
+  end;
+
+  // Сохранение данных
+  WriteDataInFile(i);
+end;
+
+procedure TfMain.MonitorCompressorShutdown(i: Integer);
+begin
+  if (numOffCmp[i] = 0) then
+  begin
+    if valW[i] < UstW then 
+      Inc(numOff[i])
+    else 
+      numOff[i] := 0;
+
+    if numOff[i] = COMPRESSOR_OFF_THRESHOLD then
+    begin
+      Inc(numOffCmp[i]);
+      with TPanel(FindComponent('pCycl_' + IntToStr(i))) do 
+        Caption := IntToStr(numOffCmp[i]);
+      wCmp[i] := true; 
+      ttCmp[i] := true; 
+      TimeOffCmp[i] := Now - tmStart[i];
+      with TImage(FindComponent('ImgNoOff_' + IntToStr(i))) do 
+        Visible := false;
+    end;
+  end;
+end;
+
+function TfMain.CheckAllParametersReady(i, nPoint: Integer): Boolean;
+var
+  k: Integer;
+  BlockXKReady, BlockMKReady: Boolean;
+begin
+  BlockXKReady := true;
+  BlockMKReady := true;
+  
+  for k := 1 to nPoint do
+  begin
+    BlockXKReady := BlockXKReady and flBlockXK[i, k];
+    BlockMKReady := BlockMKReady and flBlockMK[i, k];
+  end;
+
+  Result := not (
+    (chOffCmp[i] and not wCmp[i]) or
+    (chSumm[i] and not flSumm[i]) or
+    (chBlockXK[i] and not BlockXKReady) or
+    (chBlockMK[i] and not BlockMKReady) or
+    (chToffXK[i] and not flToffXK[i]) or
+    (chToffMK[i] and not flToffMK[i]) or
+    (chTonXK[i] and not flTonXK[i]) or
+    (chTonMK[i] and not flTonMK[i])
+  );
+end;
+
+procedure TfMain.HandleMissingParameters(i, nPoint: Integer);
+var
+  k: Integer;
+  flReadOnly: Boolean;
+begin
+  // Запрашиваем недостающие показания блоков
+  if chBlockXK[i] then
+  begin
+    with TJvEdit(FindComponent('EdBlockXK_' + IntToStr(i))) do 
+      flReadOnly := ReadOnly;
+      
+    if flReadOnly then
+    begin
+      for k := 1 to nCheckPoint[i] do
+      begin
+        if not flBlockXK[i, k] then
+        begin
+          // Переходим на эту контрольную точку
+          limitBlockXK(i, k); 
+          nPointBlock[i] := k;
+          
+          // Запрос на экран
+          with TLabel(FindComponent('ltBlock_' + IntToStr(i))) do 
+            Caption := chPointToScreen(i, k, 'Показания на ');
+            
+          with TJvEdit(FindComponent('EdBlockXK_' + IntToStr(i))) do
+          begin
+            Text := '';
+            Color := clYellow;
+            Enabled := true;
+            ReadOnly := false;
+            SetFocus;
+          end;
+          Break;
+        end;
+      end;
+    end;
+  end;
+end;
+
+procedure TfMain.ProcessTestCompletion(i, nPoint: Integer);
+begin
+  if not tpCheck[i, nPointBlock[i]] then
+  begin
+    // Промежуточная оценка результата
+    ResultIsp(i, nPointBlock[i], true);
+    
+    if ResIsp[i] then
+    begin
+      // Успешное завершение
+      SetTestState(i, STATE_COMPLETED, 'Ok.bmp');
+    end
+    else
+    begin
+      // Продолжение испытания
+      SetTestState(i, 1, 'Green.bmp');
+      TimeAllIsp[i] := 0;
+    end;
+  end
+  else
+  begin
+    // Окончательная оценка результата
+    ResultIsp(i, nCheckPoint[i], false);
+    
+    if ResIsp[i] then
+      SetTestState(i, STATE_COMPLETED, 'Ok.bmp')
+    else
+      SetTestState(i, STATE_COMPLETED, 'brak.bmp');
+      
+    // Показать результаты для всех контрольных точек
+    ShowFinalResults(i);
+  end;
+end;
+
+procedure TfMain.SetTestState(i: Integer; State: Integer; const ImageName: string);
+begin
+  with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do
+    Glyph.LoadFromFile(MyDir + 'Img\' + ImageName);
+  StatePos[i] := State;
+end;
+
+procedure TfMain.ShowFinalResults(i: Integer);
+begin
+  curPointXK[i] := nCheckPoint[i];
+  
+  if nCheckPoint[i] > 1 then
+  begin
+    with TLabel(FindComponent('ltBlock_' + IntToStr(i))) do
+      Caption := chPointToScreen(i, nCheckPoint[i], 'Показания на ');
+      
+    if chBlockXK[i] then
+    begin
+      limitBlockXK(i, nCheckPoint[i]);
+      with TUpDown(FindComponent('UpDwnXK' + IntToStr(i))) do Enabled := true;
+      with TJvEdit(FindComponent('EdBlockXK_' + IntToStr(i))) do
+      begin
+        Text := RealToStr(ttBlockXK[i, nCheckPoint[i]], 5, 1);
+        if resBlockXK[i, colPoint[i]] then 
+          Color := $00ACF471 
+        else 
+          Color := $00947DEC;
+      end;
+    end;
+    
+    if chBlockMK[i] then
+    begin
+      limitBlockMK(i, nCheckPoint[i]);
+      with TUpDown(FindComponent('UpDwnMK' + IntToStr(i))) do Enabled := true;
+      with TJvEdit(FindComponent('EdBlockMK_' + IntToStr(i))) do
+      begin
+        Text := RealToStr(ttBlockMK[i, nCheckPoint[i]], 5, 1);
+        if resBlockMK[i, colPoint[i]] then 
+          Color := $00ACF471 
+        else 
+          Color := $00947DEC;
+      end;
+    end;
+  end;
+end;
