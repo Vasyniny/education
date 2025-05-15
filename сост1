@@ -1,0 +1,427 @@
+//*************************************************************************************
+//**********************************   Состояние 1   **********************************
+//*************************************************************************************
+// если время испытания не истекло
+if StatePos[i] = 1 then
+begin
+  //-- время испытания --
+  tm := Now - tmStart[i];
+  DecodeTime(tm, hh, mm, ss, ms);
+  mmCur[i] := 60 * hh + mm;
+  
+  // Форматирование времени
+  if TimeIsp[i] > 200 then
+  begin
+    st := Format('%.2d:%.2d', [mmCur[i] div 60, mmCur[i] mod 60]);
+  end
+  else
+    st := IntToStr(mmCur[i]);
+    
+  TPanel(FindComponent('pCurTime_' + IntToStr(i))).Caption := st;
+  
+  //-- запись значений мощности и температур --
+  WriteDataInArr(i);
+  WriteDataInFile(i);
+
+  // Обработка модели (выбрана/не выбрана)
+  if not flParams[i] then
+    HandleUnselectedModel(i)
+  else
+    HandleSelectedModel(i);
+end;
+
+procedure HandleUnselectedModel(i: Integer);
+begin
+  // проверка включения компрессора
+  if (numOnCmp[i] = numOffCmp[i]) and (PowerIncreased(i)) then
+  begin
+    Inc(numOnCmp[i]);
+    UpdateButtonState(i, 'Green');
+  end;
+  
+  // проверка отключения компрессора
+  if (numOnCmp[i] > numOffCmp[i]) and (PowerDecreased(i)) then
+  begin
+    Inc(numOffCmp[i]);
+    TPanel(FindComponent('pCycl_' + IntToStr(i))).Caption := IntToStr(numOffCmp[i]);
+    UpdateButtonState(i, 'Yellow');
+  end;
+end;
+
+procedure HandleSelectedModel(i: Integer);
+begin
+  // Обработка контрольных точек
+  HandleControlPoints(i);
+  
+  // Обработка оттайки
+  DefinedOttaika(i);
+  
+  // Контроль работы компрессора
+  HandleCompressorWork(i);
+  
+  // Проверка завершения испытания
+  CheckTestCompletion(i);
+end;
+
+procedure HandleControlPoints(i: Integer);
+var
+  lbl: TLabel;
+begin
+  lbl := TLabel(FindComponent('lChTm_' + IntToStr(i)));
+  
+  if bgChTm[i] then
+  begin
+    // Метод "End"
+    if dm.spXP['Method'] = 'End' then
+      lbl.Visible := mmCur[i] <= CheckTime[i, nCheckPoint[i]]
+    // Метод "Off"
+    else if (dm.spXP['Method'] = 'Off') then
+      lbl.Visible := (numOffCmp[i] = 0) and (mmCur[i] <= CheckTime[i, nCheckPoint[i]]);
+  end
+  else
+  begin
+    // Метод "End" без bgChTm
+    if (dm.spXP['Method'] = 'End') then
+      lbl.Visible := InRange(mmCur[i], TimeIsp[i] - CheckTime[i, nCheckPoint[i]], TimeIsp[i])
+    // Метод "Off" без bgChTm
+    else
+      lbl.Visible := (numOffCmp[i] = 0) and InRange(mmCur[i], TimeIsp[i] - CheckTime[i, nCheckPoint[i]], TimeIsp[i]);
+  end;
+  
+  // Инициализация токра
+  if (bgnTokr[i] = 0) and ((bgChTm[i]) or ((not bgChTm[i]) and (mmCur[i] = TimeIsp[i] - CheckTime[i, nCheckPoint[i]]))) then
+  begin
+    bgnTokr[i] := Tokr;
+    bgnWch[i] := curWch[i];
+    lbl.Visible := True;
+  end;
+end;
+
+procedure HandleCompressorWork(i: Integer);
+begin
+  // Первое включение и последующие включения
+  if ((not flOnCmp[i]) or (numOnCmp[i] = numOffCmp[i])) and
+     ((chMetod[i] <> 'FnF') or ((chMetod[i] = 'FnF') and flWork2[i])) and
+     PowerIncreased(i, 3) then
+  begin
+    Inc(numOnCmp[i]);
+    UpdateButtonState(i, 'Green');
+  end;
+
+  // Контроль отключений (только если есть достаточное количество значений)
+  if (NumVal[i] > 2) and 
+     (numOnCmp[i] > numOffCmp[i]) and
+     ((chMetod[i] <> 'FnF') or ((chMetod[i] = 'FnF') and flWork2[i])) and
+     PowerDecreased(i, 3) and
+     (arrW[i, NumVal[i]-1] < UstW) and (arrW[i, NumVal[i]-2] < UstW) then
+  begin
+    Inc(numOffCmp[i]);
+    TPanel(FindComponent('pCycl_' + IntToStr(i))).Caption := IntToStr(numOffCmp[i]);
+    UpdateButtonState(i, 'Yellow');
+
+    // Первое отключение
+    if numOffCmp[i] = 1 then
+    begin
+      wCmp[i] := True;
+      ttCmp[i] := True;
+      TimeOffCmp[i] := Now - tmStart[i];
+      
+      if chMetod[i] = 'End' then
+      begin
+        if flW[i, nCheckPoint[i]] then
+        begin
+          ttW[i, nCheckPoint[i]] := arrW[i, NumVal[i]-3];
+          nChW[i, nCheckPoint[i]] := NumVal[i]-3;
+          CheckParamWatt(i, nCheckPoint[i]);
+        end;
+      end
+      else if endTokr[i, nCheckPoint[i]] = 0 then
+      begin
+        endTokr[i, nCheckPoint[i]] := Tokr;
+        SaveParamIsp(i);
+        ParamIspInScreen(i, nCheckPoint[i]);
+      end;
+    end;
+  end;
+end;
+
+procedure CheckTestCompletion(i: Integer);
+var
+  k, j, n: Integer;
+begin
+  // Проверка завершения контрольного времени
+  if ((bgChTm[i] and (mmCur[i] = CheckTime[i, nCheckPoint[i]]) and (not flSavePar[i, nCheckPoint[i]])) or
+     ((not bgChTm[i]) and (mmCur[i] = TimeIsp[i])) then
+  begin
+    FinalizeCheckPoint(i);
+  end
+  // Проверка полного завершения испытания
+  else if (mmCur[i] >= TimeIsp[i]) or
+          (bgChTm[i] and (mmCur[i] >= CheckTime[i, nCheckPoint[i]]) and 
+           (numOnCmp[i] > 0) and (numOffCmp[i] > 0) and 
+           (TimeIsp[i] > CheckTime[i, nCheckPoint[i]])) then
+  begin
+    FinalizeTest(i);
+  end;
+end;
+
+procedure FinalizeCheckPoint(i: Integer);
+var
+  k, j: Integer;
+begin
+  TLabel(FindComponent('lChTm_' + IntToStr(i))).Visible := False;
+  
+  if not flSavePar[i, nCheckPoint[i]] then
+  begin
+    endTokr[i, nCheckPoint[i]] := Tokr;
+    SaveParamIsp(i);
+    ParamIspInScreen(i, nCheckPoint[i]);
+  end;
+  
+  // Обработка расхода электроэнергии
+  if flWch[i, nCheckPoint[i]] then
+  begin
+    k := nCheckPoint[i];
+    ttWch[i, nCheckPoint[i]] := curWch[i] - bgnWch[i];
+  end
+  else
+  begin
+    for j := nCheckPoint[i] downto 1 do
+      if flWch[i, j] then
+      begin
+        k := j;
+        Break;
+      end;
+  end;
+  
+  if flWch[i, k] then
+    CheckParamWch(i, k);
+  
+  // Переход к следующей контрольной точке
+  PrepareNextCheckPoint(i);
+end;
+
+procedure PrepareNextCheckPoint(i: Integer);
+begin
+  dm.spXP.Close;
+  dm.spXP.Open;
+  dm.spXP.Locate('kod', KodXP[i], [loCaseInsensitive]);
+  
+  dm.checkTime.Close;
+  dm.checkTime.Open;
+  dm.checkTime.RecNo := nCheckPoint[i];
+  
+  if dm.checkTime.RecordCount > nCheckPoint[i] then
+  begin
+    if not tpCheck[i, nCheckPoint[i]] then
+    begin
+      ResultChPoinTempWtWtch(i, nCheckPoint[i], True);
+      
+      if ResIsp[i] then
+      begin
+        UpdateButtonState(i, 'Blue');
+        TimeAllIsp[i] := Now - tmStart[i];
+        StatePos[i] := 2;
+      end
+      else
+      begin
+        flBlockXK[i, nCheckPoint[i]] := True;
+        flBlockMK[i, nCheckPoint[i]] := True;
+        StatePos[i] := 1;
+        MoveToNextCheckPoint(i);
+      end;
+    end;
+    
+    PrepareBlockInputs(i);
+  end;
+end;
+
+procedure MoveToNextCheckPoint(i: Integer);
+begin
+  nPointBlock[i] := nCheckPoint[i];
+  nCheckPoint[i] := nCheckPoint[i] + 1;
+  dm.checkTime.RecNo := nCheckPoint[i];
+  CheckTime[i, nCheckPoint[i]] := dm.checkTime['chTime'];
+  
+  TLabel(FindComponent('lchPoint' + IntToStr(i))).Caption := 
+    chPointToScreen(i, nCheckPoint[i], 'K:');
+  
+  flWch[i, nCheckPoint[i]] := dm.qspPSI['Wtch'] <> NULL;
+  flW[i, nCheckPoint[i]] := dm.qspPSI['Wt'] <> NULL;
+end;
+
+procedure PrepareBlockInputs(i: Integer);
+begin
+  if chBlockMK[i] or chBlockXK[i] then
+  begin
+    with TLabel(FindComponent('ltBlock_' + IntToStr(i))) do
+      Caption := chPointToScreen(i, nCheckPoint[i], 'Показания на ');
+      
+    if chBlockMK[i] then
+      PrepareBlockInput('MK', i, valTemp[i, 2]);
+      
+    if chBlockXK[i] then
+      PrepareBlockInput('XK', i, valTemp[i, 1]);
+      
+    TJvScrollBox(FindComponent('scbBlock' + IntToStr(i))).Enabled := True;
+  end;
+  
+  nPointBlock[i] := nCheckPoint[i];
+  nCheckPoint[i] := nCheckPoint[i] + 1;
+  dm.checkTime.RecNo := nCheckPoint[i];
+  CheckTime[i, nCheckPoint[i]] := dm.checkTime['chTime'];
+  
+  TLabel(FindComponent('lchPoint' + IntToStr(i))).Caption := 
+    chPointToScreen(i, nCheckPoint[i], 'K:');
+    
+  flWch[i, nCheckPoint[i]] := dm.qspPSI['Wtch'] <> NULL;
+  flW[i, nCheckPoint[i]] := dm.qspPSI['Wt'] <> NULL;
+end;
+
+procedure PrepareBlockInput(const BlockType: string; i: Integer; TempValue: Double);
+var
+  ed: TJvEdit;
+begin
+  ed := TJvEdit(FindComponent('EdBlock' + BlockType + '_' + IntToStr(i)));
+  ed.Text := '';
+  ed.Color := clYellow;
+  ed.Enabled := True;
+  ed.ReadOnly := False;
+  
+  if BlockType = 'MK' then
+    TempBlockMK[i, nCheckPoint[i]] := TempValue
+  else
+    TempBlockXK[i, nCheckPoint[i]] := TempValue;
+end;
+
+procedure FinalizeTest(i: Integer);
+var
+  k, j, n: Integer;
+begin
+  UpdateButtonState(i, 'Blue');
+  TimeAllIsp[i] := Now - tmStart[i];
+  
+  if not flSavePar[i, nCheckPoint[i]] then
+  begin
+    endTokr[i, nCheckPoint[i]] := Tokr;
+    SaveParamIsp(i);
+    ParamIspInScreen(i, nCheckPoint[i]);
+  end;
+  
+  // Обработка расхода электроэнергии
+  if flWch[i, nCheckPoint[i]] then
+  begin
+    k := nCheckPoint[i];
+    ttWch[i, nCheckPoint[i]] := curWch[i] - bgnWch[i];
+  end
+  else
+  begin
+    for j := nCheckPoint[i] downto 1 do
+      if flWch[i, j] then
+      begin
+        k := j;
+        Break;
+      end;
+  end;
+  
+  if flWch[i, k] then
+    CheckParamWch(i, k);
+  
+  // Переход в состояние ожидания данных
+  numOff[i] := 0;
+  StatePos[i] := 2;
+  nPointBlock[i] := nCheckPoint[i];
+  
+  if chOffCmp[i] and (numOffCmp[i] = 0) then
+    TImage(FindComponent('ImgNoOff_' + IntToStr(i))).Visible := True;
+  
+  if chSumm[i] then
+  begin
+    case i of
+      1..3: n := 1;
+      4..6: n := 2;
+      7..9: n := 3;
+      10..12: n := 4;
+    end;
+    
+    if not flU[n] then
+      flU[n] := True; // ELpribBuildRequest QuestTComPort(n,'U');
+  end;
+  
+  PrepareFinalInputs(i);
+end;
+
+procedure PrepareFinalInputs(i: Integer);
+begin
+  if chBlockMK[i] or chBlockXK[i] or chToffMK[i] or chToffXK[i] or chTonMK[i] or chTonXK[i] then
+  begin
+    with TLabel(FindComponent('ltBlock_' + IntToStr(i))) do
+      Caption := chPointToScreen(i, nCheckPoint[i], 'Показания на ');
+      
+    with TJvScrollBox(FindComponent('scbBlock' + IntToStr(i))) do
+    begin
+      Enabled := True;
+      if chBlockMK[i] or chBlockXK[i] then
+        VertScrollBar.Position := 0
+      else if chToffMK[i] or chToffXK[i] then
+        VertScrollBar.Position := 65
+      else if chTonMK[i] or chTonXK[i] then
+        VertScrollBar.Position := 130;
+    end;
+  end;
+  
+  // Подготовка полей ввода
+  if chBlockMK[i] then
+    PrepareInputField('MK', i, valTemp[i, 2]);
+    
+  if chBlockXK[i] then
+    PrepareInputField('XK', i, valTemp[i, 1]);
+    
+  if chToffMK[i] then
+    PrepareInputField('ToffMK', i, 0);
+    
+  if chToffXK[i] then
+    PrepareInputField('ToffXK', i, 0);
+    
+  if chTonMK[i] then
+    PrepareInputField('TonMK', i, 0);
+    
+  if chTonXK[i] then
+    PrepareInputField('TonXK', i, 0);
+end;
+
+procedure PrepareInputField(const FieldName: string; i: Integer; DefaultValue: Double);
+var
+  ed: TJvEdit;
+begin
+  ed := TJvEdit(FindComponent('Ed' + FieldName + '_' + IntToStr(i)));
+  ed.Text := '';
+  ed.Color := clYellow;
+  ed.Enabled := True;
+  ed.ReadOnly := False;
+  
+  if Pos('Block', FieldName) > 0 then
+  begin
+    if Pos('MK', FieldName) > 0 then
+      TempBlockMK[i, nCheckPoint[i]] := DefaultValue
+    else
+      TempBlockXK[i, nCheckPoint[i]] := DefaultValue;
+  end;
+end;
+
+// Вспомогательные функции
+function PowerIncreased(i, Offset: Integer = 1): Boolean;
+begin
+  Result := (arrW[i, NumVal[i]-1] - arrW[i, NumVal[i]-Offset]) > UstW;
+end;
+
+function PowerDecreased(i, Offset: Integer = 1): Boolean;
+begin
+  Result := (arrW[i, NumVal[i]-Offset] - arrW[i, NumVal[i]-1]) > UstW;
+end;
+
+procedure UpdateButtonState(i: Integer; const Color: string);
+begin
+  with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do
+    Glyph.LoadFromFile(MyDir + 'Img\' + Color + '.bmp');
+end;
