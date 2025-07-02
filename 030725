@@ -1,0 +1,269 @@
+Мы можем обойтись без записи (record) для хранения параметров метода, если вместо этого использовать набор функций, которые инкапсулируют поведение каждого метода. Однако, если мы хотим избежать повторения кода и сделать его более читаемым, можно использовать подход на основе классов или интерфейсов, но это может быть избыточно для небольшого количества методов.
+Вместо этого, мы можем создать отдельные процедуры для каждого метода, которые будут обрабатывать их специфическую логику. При этом мы можем передавать необходимые параметры в эти процедуры.
+Давайте перепишем обработку методов без использования записи, но с выделением логики в отдельные процедуры. Мы создадим:
+1. Процедуру для метода "End"
+2. Процедуру для метода "Off"
+3. Процедуру для метода "FnF" (Full No Frost)
+Каждая процедура будет принимать индекс позиции (n) и выполнять необходимые действия для этого метода.
+Пример:
+```pascal
+procedure TfMain.ProcessEndMethod(n: Integer);
+var
+  ShowLabel: Boolean;
+begin
+  // Логика для метода End
+  if bgChTm[n] then
+    ShowLabel := (mmCur[n] <= CheckTime[n, nCheckPoint[n]])
+  else
+    ShowLabel := (mmCur[n] >= (TimeIsp[n] - CheckTime[n, nCheckPoint[n]])) and (mmCur[n] < TimeIsp[n]);
+  TLabel(FindComponent('lChTm_' + IntToStr(n))).Visible := ShowLabel;
+end;
+procedure TfMain.ProcessOffMethod(n: Integer);
+var
+  ShowLabel: Boolean;
+begin
+  // Логика для метода Off
+  if numOffCmp[n] = 0 then
+  begin
+    if bgChTm[n] then
+      ShowLabel := (mmCur[n] <= CheckTime[n, nCheckPoint[n]])
+    else
+      ShowLabel := (mmCur[n] >= (TimeIsp[n] - CheckTime[n, nCheckPoint[n]])) and (mmCur[n] < TimeIsp[n]);
+  end
+  else
+    ShowLabel := False;
+  TLabel(FindComponent('lChTm_' + IntToStr(n))).Visible := ShowLabel;
+end;
+procedure TfMain.ProcessFnFMethod(n: Integer);
+begin
+  // Для FnF можно использовать ту же логику, что и для End, или свою
+  ProcessEndMethod(n); // в данном случае просто вызываем End метод
+end;
+```
+Затем в основном таймере (TmrIspTimer) мы будем вызывать соответствующую процедуру в зависимости от метода:
+```pascal
+procedure TfMain.TmrIspTimer(Sender: TObject);
+var
+  i: Integer;
+  CurrentMethod: string;
+begin
+  // ... (предыдущий код)
+  for i := 1 to 12 do
+  begin
+    if StatePos[i] = 1 then // только для активных испытаний
+    begin
+      CurrentMethod := chMetod[i];
+      if CurrentMethod = 'End' then
+        ProcessEndMethod(i)
+      else if CurrentMethod = 'Off' then
+        ProcessOffMethod(i)
+      else if CurrentMethod = 'FnF' then
+        ProcessFnFMethod(i);
+    end;
+  end;
+  // ... (последующий код)
+end;
+```
+Такой подход позволяет:
+1. Изолировать логику каждого метода в отдельной процедуре.
+2. Упростить понимание кода, так как каждая процедура отвечает за свой метод.
+3. Легко модифицировать или добавлять новые методы.
+При этом мы не используем записи (records) или классы, а просто выносим код в процедуры.
+Дополнительно, можно вынести и другую логику, связанную с методами, в эти же процедуры (если требуется), чтобы полностью инкапсулировать поведение.
+Например, в методе "Off" нам может потребоваться дополнительная проверка отключения компрессора, которую мы также можем поместить в процедуру ProcessOffMethod.
+Таким образом, мы добиваемся модульности и читаемости без усложнения структуры данных.
+Да, можно обойтись без записи для хранения параметров метода. Вот несколько альтернативных подходов, которые сохранят ясность кода без добавления сложных структур:
+
+1. Использование перечислений (enum) и case-оператора
+pascal
+type
+  TTestMethod = (tmEnd, tmOff, tmFnF);
+
+// Преобразование строки в enum
+function MethodToEnum(const MethodName: string): TTestMethod;
+begin
+  if MethodName = 'End' then
+    Result := tmEnd
+  else if MethodName = 'Off' then
+    Result := tmOff
+  else if MethodName = 'FnF' then
+    Result := tmFnF
+  else
+    Result := tmEnd; // По умолчанию
+end;
+
+// Обработка методов
+procedure TfMain.ProcessControlLabel(PosIndex: Integer);
+var
+  ShowLabel: Boolean;
+begin
+  ShowLabel := False;
+  
+  case MethodToEnum(chMetod[PosIndex]) of
+    tmEnd:
+      if bgChTm[PosIndex] then
+        ShowLabel := mmCur[PosIndex] <= CheckTime[PosIndex, nCheckPoint[PosIndex]]
+      else
+        ShowLabel := (mmCur[PosIndex] >= TimeIsp[PosIndex] - CheckTime[PosIndex, nCheckPoint[PosIndex]]) 
+                     and (mmCur[PosIndex] < TimeIsp[PosIndex]);
+    
+    tmOff:
+      if numOffCmp[PosIndex] = 0 then
+        if bgChTm[PosIndex] then
+          ShowLabel := mmCur[PosIndex] <= CheckTime[PosIndex, nCheckPoint[PosIndex]]
+        else
+          ShowLabel := (mmCur[PosIndex] >= TimeIsp[PosIndex] - CheckTime[PosIndex, nCheckPoint[PosIndex]]) 
+                       and (mmCur[PosIndex] < TimeIsp[PosIndex]);
+    
+    tmFnF: 
+      // Логика для FullNoFrost
+      ShowLabel := ...; 
+  end;
+  
+  TLabel(FindComponent('lChTm_'+IntToStr(PosIndex))).Visible := ShowLabel;
+end;
+2. Создание простых функций для каждого метода
+pascal
+// Функции-обработчики для каждого метода
+function ShouldShowEndLabel(PosIndex: Integer): Boolean;
+begin
+  if bgChTm[PosIndex] then
+    Result := mmCur[PosIndex] <= CheckTime[PosIndex, nCheckPoint[PosIndex]]
+  else
+    Result := (mmCur[PosIndex] >= TimeIsp[PosIndex] - CheckTime[PosIndex, nCheckPoint[PosIndex]]) 
+              and (mmCur[PosIndex] < TimeIsp[PosIndex]);
+end;
+
+function ShouldShowOffLabel(PosIndex: Integer): Boolean;
+begin
+  Result := False;
+  if numOffCmp[PosIndex] = 0 then
+  begin
+    if bgChTm[PosIndex] then
+      Result := mmCur[PosIndex] <= CheckTime[PosIndex, nCheckPoint[PosIndex]]
+    else
+      Result := (mmCur[PosIndex] >= TimeIsp[PosIndex] - CheckTime[PosIndex, nCheckPoint[PosIndex]]) 
+                and (mmCur[PosIndex] < TimeIsp[PosIndex]);
+  end;
+end;
+
+// Основная процедура
+procedure TfMain.UpdateControlLabels;
+var
+  i: Integer;
+begin
+  for i := 1 to 12 do
+  begin
+    if chMetod[i] = 'End' then
+      ShowControlLabel(i, ShouldShowEndLabel(i))
+    else if chMetod[i] = 'Off' then
+      ShowControlLabel(i, ShouldShowOffLabel(i))
+    else if chMetod[i] = 'FnF' then
+      ShowControlLabel(i, ShouldShowFnFLabel(i)); 
+  end;
+end;
+
+procedure TfMain.ShowControlLabel(PosIndex: Integer; Visible: Boolean);
+begin
+  TLabel(FindComponent('lChTm_'+IntToStr(PosIndex))).Visible := Visible;
+end;
+3. Компактная версия с комментариями
+pascal
+procedure TfMain.UpdateControlLabels;
+var
+  i: Integer;
+  ShowLabel: Boolean;
+begin
+  for i := 1 to 12 do
+  begin
+    ShowLabel := False;
+    
+    // Метод "End": контрольное время в конце испытания
+    if (chMetod[i] = 'End') or (chMetod[i] = 'FnF') then
+    begin
+      if bgChTm[i] then
+        ShowLabel := mmCur[i] <= CheckTime[i, nCheckPoint[i]]
+      else
+        ShowLabel := (mmCur[i] >= TimeIsp[i] - CheckTime[i, nCheckPoint[i]]) 
+                     and (mmCur[i] < TimeIsp[i]);
+    end
+    
+    // Метод "Off": контрольное время в начале + проверка отключения компрессора
+    else if chMetod[i] = 'Off' then
+    begin
+      if numOffCmp[i] = 0 then
+      begin
+        if bgChTm[i] then
+          ShowLabel := mmCur[i] <= CheckTime[i, nCheckPoint[i]]
+        else
+          ShowLabel := (mmCur[i] >= TimeIsp[i] - CheckTime[i, nCheckPoint[i]]) 
+                       and (mmCur[i] < TimeIsp[i]);
+      end;
+    end;
+    
+    TLabel(FindComponent('lChTm_'+IntToStr(i))).Visible := ShowLabel;
+  end;
+end;
+4. Версия с выносом условий в отдельные функции
+pascal
+function IsDuringInitialControl(PosIndex: Integer): Boolean;
+begin
+  Result := bgChTm[PosIndex] and 
+            (mmCur[PosIndex] <= CheckTime[PosIndex, nCheckPoint[PosIndex]]);
+end;
+
+function IsDuringFinalControl(PosIndex: Integer): Boolean;
+begin
+  Result := not bgChTm[PosIndex] and 
+            (mmCur[PosIndex] >= TimeIsp[PosIndex] - CheckTime[PosIndex, nCheckPoint[PosIndex]]) and 
+            (mmCur[PosIndex] < TimeIsp[PosIndex]);
+end;
+
+function ShouldShowForOffMethod(PosIndex: Integer): Boolean;
+begin
+  Result := (numOffCmp[PosIndex] = 0) and 
+            (IsDuringInitialControl(PosIndex) or IsDuringFinalControl(PosIndex));
+end;
+
+function ShouldShowForEndMethod(PosIndex: Integer): Boolean;
+begin
+  Result := IsDuringInitialControl(PosIndex) or IsDuringFinalControl(PosIndex);
+end;
+
+// Основной метод
+procedure TfMain.UpdateControlLabels;
+var
+  i: Integer;
+begin
+  for i := 1 to 12 do
+  begin
+    if chMetod[i] = 'Off' then
+      ShowControlLabel(i, ShouldShowForOffMethod(i))
+    else
+      ShowControlLabel(i, ShouldShowForEndMethod(i));
+  end;
+end;
+Преимущества этих подходов:
+Простота: Не требуют создания новых типов данных
+
+Читаемость: Каждый метод обработки изолирован в своей функции
+
+Гибкость: Легко добавлять новые методы или изменять существующие
+
+Сопровождаемость: Логика каждого метода сосредоточена в одном месте
+
+Понятность для новичка: Используются базовые конструкции языка
+
+Для вашего случая я рекомендую вариант 2 или 4, так как они:
+
+Максимально разделяют логику разных методов
+
+Сохраняют код плоским и понятным
+
+Позволяют легко тестировать каждую функцию отдельно
+
+Не добавляют излишней сложности
+
+Сохраняют ясную связь между методом испытания и его обработкой
+
+Все варианты устраняют сложные вложенные условия, заменяя их на набор простых функций с понятными названиями, что значительно улучшает читаемость кода.
