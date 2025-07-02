@@ -150,4 +150,169 @@ end;
 3. Постепенно рефакторите код, постоянно тестируя работоспособность
 4. Изучите принципы SOLID для улучшения архитектуры
 
-Помните, что упрощение промышленного кода - это постепенный процесс. Лучше делать небольшие изменения с тестированием после каждого шага.
+Чтобы сделать работу с методами bgChTm, End и Off более понятной, я выделю эту логику в отдельные функции с ясными названиями. Вот как можно реорганизовать код:
+
+1. Создадим отдельные функции для обработки каждого метода
+pascal
+// Обработка метода "End"
+procedure ProcessEndMethod(PosIndex: Integer);
+var
+  ShowLabel: Boolean;
+begin
+  if bgChTm[PosIndex] then
+  begin
+    // Контрольное время с начала испытания
+    ShowLabel := (mmCur[PosIndex] <= CheckTime[PosIndex, nCheckPoint[PosIndex]]);
+  end
+  else
+  begin
+    // Контрольное время перед окончанием испытания
+    ShowLabel := (mmCur[PosIndex] >= (TimeIsp[PosIndex] - CheckTime[PosIndex, nCheckPoint[PosIndex]])) 
+                 and (mmCur[PosIndex] < TimeIsp[PosIndex]);
+  end;
+  
+  UpdateControlLabel(PosIndex, ShowLabel);
+end;
+
+// Обработка метода "Off"
+procedure ProcessOffMethod(PosIndex: Integer);
+var
+  ShowLabel: Boolean;
+begin
+  if numOffCmp[PosIndex] = 0 then // Если компрессор еще не отключался
+  begin
+    if bgChTm[PosIndex] then
+    begin
+      ShowLabel := (mmCur[PosIndex] <= CheckTime[PosIndex, nCheckPoint[PosIndex]]);
+    end
+    else
+    begin
+      ShowLabel := (mmCur[PosIndex] >= (TimeIsp[PosIndex] - CheckTime[PosIndex, nCheckPoint[PosIndex]])) 
+                   and (mmCur[PosIndex] < TimeIsp[PosIndex]);
+    end;
+  end
+  else
+  begin
+    ShowLabel := False; // Скрыть метку после отключения компрессора
+  end;
+  
+  UpdateControlLabel(PosIndex, ShowLabel);
+end;
+
+// Обновление метки контрольного времени
+procedure UpdateControlLabel(PosIndex: Integer; Visible: Boolean);
+begin
+  with TLabel(FindComponent('lChTm_'+IntToStr(PosIndex))) do
+    Visible := Visible;
+end;
+2. Упростим вызов в основном таймере
+pascal
+procedure TfMain.TmrIspTimer(Sender: TObject);
+var
+  i: Integer;
+  CurrentMethod: string;
+begin
+  // ... другой код ...
+  
+  for i := 1 to 12 do
+  begin
+    if flParams[i] then
+    begin
+      CurrentMethod := chMetod[i];
+      
+      if CurrentMethod = 'End' then
+        ProcessEndMethod(i)
+      else if CurrentMethod = 'Off' then
+        ProcessOffMethod(i)
+      else if CurrentMethod = 'FnF' then
+        ProcessEndMethod(i); // Для FullNoFrost используем ту же логику
+    end;
+  end;
+  
+  // ... другой код ...
+end;
+3. Выделим функцию для отображения контрольной точки
+pascal
+function GetControlPointCaption(PosIndex, PointIndex: Integer): string;
+begin
+  if bgChTm[PosIndex] then
+    Result := 'Контрольное время: ' + IntToStr(CheckTime[PosIndex, PointIndex]) + ' мин'
+  else
+    Result := 'Контрольная точка: ' + IntToStr(TimeIsp[PosIndex] - CheckTime[PosIndex, PointIndex]) 
+              + ' мин';
+end;
+
+// Использование:
+with TLabel(FindComponent('lchPoint'+IntToStr(i))) do
+  Caption := GetControlPointCaption(i, nCheckPoint[i]);
+4. Создадим запись для хранения параметров метода
+pascal
+type
+  TTestMethod = record
+    Name: string;
+    IsBgChTm: Boolean;
+    CheckOffCompressor: Boolean;
+    // Другие параметры...
+  end;
+
+// Инициализация методов
+procedure InitializeMethods;
+begin
+  EndMethod.Name := 'End';
+  EndMethod.IsBgChTm := False; // Контрольное время в конце
+  EndMethod.CheckOffCompressor := False;
+
+  OffMethod.Name := 'Off';
+  OffMethod.IsBgChTm := True;  // Контрольное время в начале
+  OffMethod.CheckOffCompressor := True;
+end;
+
+// Использование:
+if CurrentMethod = OffMethod.Name then
+begin
+  // Логика для метода Off
+end;
+5. Пример упрощенной обработки в коде
+pascal
+// Вместо сложных условий:
+if (dm.spXP['Method']='End') then
+begin
+  // Большой блок кода...
+end 
+else if (dm.spXP['Method']='Off') then
+begin
+  // Большой блок кода...
+end;
+
+// Используем:
+case CurrentMethod of
+  'End': HandleEndMethod(i);
+  'Off': HandleOffMethod(i);
+  'FnF': HandleFnFMethod(i);
+end;
+Ключевые улучшения:
+Четкое разделение логики для каждого метода испытаний
+
+Ясные названия функций, отражающие их назначение
+
+Уменьшение вложенности кода
+
+Повторное использование общего кода
+
+Централизованное управление параметрами методов
+
+Упрощение модификации при добавлении новых методов
+
+Такой подход делает код:
+
+Более читаемым
+
+Легче для понимания
+
+Проще для отладки
+
+Гибче для расширения
+
+Менее подверженным ошибкам
+
+Для новичка это будет особенно полезно, так как позволяет изучать и модифицировать логику каждого метода по отдельности, не погружаясь сразу во всю сложность системы.
