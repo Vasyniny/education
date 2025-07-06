@@ -1,0 +1,347 @@
+// Объявление процедур в секции private или public вашей формы TfMain
+// (или в отдельном вспомогательном юните)
+// private
+//   procedure HandleState0(i: Integer);
+//   procedure HandleState1(i: Integer);
+//   procedure HandleState2(i: Integer);
+//   procedure HandleState3(i: Integer);
+
+// --- Реализация новых процедур ---
+
+procedure TfMain.HandleState0(i: Integer);
+begin
+  // StatePos[i] = 0 (Ожидание начала теста)
+  // В этом состоянии мы ждем, когда компрессор включится и начнется тест.
+  if TJvXPButton(FindComponent('BtnRes_' + IntToStr(i))).Enabled then
+    Exit; // Пропускаем, если кнопка сброса включена (возможно, тест завершен/приостановлен)
+
+  // Обнаружение включения компрессора (3 последовательных измерения выше UstW)
+  if valW[i] >= UstW then
+  begin
+    Inc(NumVal[i]); // Увеличиваем счетчик валидных показаний выше порога
+    arrW[i, NumVal[i] - 1] := valW[i]; // Сохраняем показание
+    if NumVal[i] = 3 then // Если 3 последовательных показания выше порога
+    begin
+      // Начало нового теста: инициализация и переход в StatePos = 1
+      edKod[i].Enabled := True;
+      edKod[i].Color := clYellow;
+      edKod[i].SetFocus;
+      lModel[i].Enabled := True;
+      BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Green.bmp'); // Зеленый: компрессор включен
+      pCycl[i].Caption := '0';
+      StatePos[i] := 1; // Переход в состояние "тест в процессе"
+
+      flOnCmp[i] := True; // Компрессор включен
+      Inc(numOnCmp[i]); // Увеличиваем счетчик включений компрессора
+
+      Data[i].tmStart := Now; // Фиксируем время начала теста
+      Data[i].bgnTokr := Tokr; // Фиксируем начальную температуру окружающей среды
+      flWork1[i] := True; // Устанавливаем флаг работы
+      tmOnWork1[i] := Data[i].tmStart; // Фиксируем время начала работы
+
+      TmrPerW[i].Enabled := True; // Включаем таймер для расчёта энергопотребления
+      NumVal[i] := 0; // Сбрасываем счетчик для следующего цикла
+    end;
+  end
+  else
+  begin
+    NumVal[i] := 0; // Сбрасываем, если мощность упала ниже порога
+  end;
+end;
+
+---
+
+procedure TfMain.HandleState1(i: Integer);
+var
+  // Теперь ProcessCheckPoint будет полностью инкапсулирована
+  // и не потребует прямой передачи данных о dm.checkTime['tpCheck']
+begin
+  // StatePos[i] = 1 (Тест в процессе)
+  // Это самое комплексное состояние, где происходят основные измерения.
+
+  // 1. Проверка, загружены ли параметры модели ХП
+  if not flParams[i] then
+  begin
+    // Если параметры не загружены (код ХП не введен/подтвержден),
+    // мы продолжаем отслеживать только базовое включение/выключение компрессора.
+    if valW[i] >= UstW then
+    begin
+      Inc(NumVal[i]);
+      if NumVal[i] >= 3 then
+      begin
+        if not flOnCmp[i] then
+        begin
+          Inc(numOnCmp[i]);
+          flOnCmp[i] := True;
+          BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Green.bmp');
+        end;
+        NumVal[i] := 0;
+      end;
+    end
+    else
+    begin
+      Inc(NumOff[i]);
+      if NumOff[i] >= 3 then
+      begin
+        if flOnCmp[i] then
+        begin
+          Inc(numOffCmp[i]);
+          flOnCmp[i] := False;
+          BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Yellow.bmp'); // Желтый: компрессор выключен
+          pCycl[i].Caption := IntToStr(numOffCmp[i] div 2); // Обновление счетчика циклов
+        end;
+        NumOff[i] := 0;
+      end;
+    end;
+    Exit; // Выходим, пока параметры не загружены
+  end;
+
+  // 2. Обработка контрольных точек (инкапсулированная логика)
+  ProcessCheckPoint(i); // Вызываем процедуру, которая управляет началом/концом контрольных точек и их оценкой
+
+  // 3. Общая логика отслеживания включения/выключения компрессора и специфических методов (End/Off)
+  // Эта часть остается здесь, так как она не полностью покрывается ProcessCheckPoint,
+  // а связана с общим циклом работы компрессора и методом испытания.
+  if valW[i] < UstW then
+    Inc(NumOff[i])
+  else
+    NumOff[i] := 0;
+
+  if NumOff[i] >= 3 then // Если компрессор отключился (3 последовательных показания ниже UstW)
+  begin
+    if flOnCmp[i] then // Если он был включен
+    begin
+      Inc(numOffCmp[i]); // Увеличиваем счетчик отключений
+      flOnCmp[i] := False; // Компрессор выключен
+      BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Yellow.bmp'); // Желтый: компрессор выключен
+      pCycl[i].Caption := IntToStr(numOffCmp[i] div 2); // Обновление циклов
+
+      // --- Логика первого отключения компрессора (для методов 'End' / 'Off') ---
+      // Важно: если ProcessCheckPoint уже обрабатывает сохранение параметров для контрольных точек,
+      // эту часть нужно скорректировать, чтобы избежать дублирования или конфликтов.
+      // Например, можно проверять, был ли этот SaveParamIsp уже сделан в ProcessCheckPoint
+      if numOffCmp[i] = 1 then // Если это первое отключение компрессора
+      begin
+        Data[i].TimeOffCmp := Now; // Фиксируем время первого отключения
+        if chMetod[i] = 'End' then // Метод 'End': сохранение только мощности
+        begin
+          Data[i].ttW := Data[i].curW;
+          Data[i].nChW := nChW[i];
+          CheckParamWatt(i);
+        end
+        else // Метод 'Off' (стандартный, не 'End'): сохранение всех контрольных параметров
+        begin
+           // Проверяем, не было ли уже сохранения в ProcessCheckPoint, чтобы избежать дублирования
+           if not flSavePar[i] then // Если ProcessCheckPoint не сохранял их
+           begin
+             Data[i].endTokr := Tokr;
+             SaveParamIsp(i);
+             ParamIspInScreen(i);
+             flSavePar[i] := True; // Устанавливаем флаг, что сохранение произошло
+           end;
+        end;
+      end;
+    end;
+  end
+  else // Если компрессор включен или готовится к включению
+  begin
+    if valW[i] >= UstW then
+      Inc(NumVal[i])
+    else
+      NumVal[i] := 0;
+
+    if NumVal[i] >= 3 then // Если компрессор включился
+    begin
+      if not flOnCmp[i] then
+      begin
+        Inc(numOnCmp[i]);
+        flOnCmp[i] := True;
+        BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Green.bmp'); // Зеленый: компрессор включен
+      end;
+      NumVal[i] := 0;
+    end;
+  end;
+
+  // 4. Постоянно вызываемые процедуры
+  DefinedOttaika(i); // Определение статуса оттайки
+  RaschetWch(i); // Расчет текущего энергопотребления
+
+  // 5. Условие завершения всего теста
+  // Эта логика определяет, когда весь тест для данной позиции должен закончиться
+  // (например, по достижении TimeIsp[i] или других специфических условий для ХП)
+  // if (Data[i].mmCur >= TimeIsp[i]) or ... then
+  // begin
+  //    StatePos[i] := 3; // Переход в состояние "тест завершен"
+  //    // Дополнительная логика завершения, если нужна
+  // end;
+end;
+
+---
+
+procedure TfMain.HandleState2(i: Integer);
+var
+  nPoint: Integer;
+  stateBlockXK, stateBlockMK: Boolean;
+begin
+  // StatePos[i] = 2 (Ожидание данных / Финальная проверка)
+  // В этом состоянии система ждет завершения компрессора или ввода ручных данных.
+
+  // Контроль отключения компрессора (если еще не произошло после завершения времени теста)
+  if (numOffCmp[i] = 0) then // Только если компрессор не отключался
+  begin
+    if valW[i] < UstW then // Мощность ниже порога
+      Inc(numOff[i]) // Увеличиваем счетчик показаний ниже порога
+    else
+      numOff[i] := 0; // Сбрасываем, если мощность снова поднялась
+
+    if numOff[i] = 3 then // Если 3 последовательных показания ниже порога
+    begin
+      Inc(numOffCmp[i]); // Увеличиваем счетчик отключений
+      pCycl[i].Caption := IntToStr(numOffCmp[i] div 2); // Обновление циклов
+      wCmp[i] := True;
+      ttCmp[i] := True; // Флаги, указывающие на отключение компрессора
+      Data[i].TimeOffCmp := Now; // Фиксируем время отключения
+      ImgNoOff[i].Visible := False; // Скрываем индикатор "нет отключения"
+    end;
+  end;
+
+  // Проверка доступности всех параметров блока (XK, MK)
+  stateBlockXK := True;
+  stateBlockMK := True;
+  nPoint := definePoint(i); // Определяем количество соответствующих контрольных точек
+
+  // Проверяем, доступны ли все параметры блока для текущей контрольной точки
+  for k := 0 to nPoint - 1 do
+  begin
+    if not flBlockXK[i, k] then stateBlockXK := False;
+    if not flBlockMK[i, k] then stateBlockMK := False;
+  end;
+
+  // Сложное условие для определения, требуется ли ручной ввод блока
+  if ((chOffCmp[i]) and (not wCmp[i])) or
+     ((chSuma[i]) and (not ttCmp[i])) or
+     ((chBlockXK[i]) and (not stateBlockXK)) or
+     ((chBlockMK[i]) and (not stateBlockMK)) or
+     ((chTimeOn[i]) and (not tmOnWork[i])) or
+     ((chTimeOff[i]) and (not tmOffWork[i])) then
+  begin
+    // Если есть отсутствующие параметры, запрашиваем ввод блока
+    if (chBlockXK[i]) and (not stateBlockXK) and (flBlockXK[i, nCheckPoint[i]]) then
+    begin
+      // Ищем пропущенные данные в предыдущих точках, если текущая уже заполнена
+      if flBlockXK[i, nCheckPoint[i]] then
+      begin
+        for k := 0 to nCheckPoint[i] - 1 do
+        begin
+          if not flBlockXK[i, k] then
+          begin
+            edBlockXK[i].Enabled := True;
+            edBlockXK[i].Color := clYellow;
+            edBlockXK[i].SetFocus;
+            MessageDlgPos('Необходимо ввести данные блока для ' + IntToStr(k + 1) + '-й контрольной точки!', mtWarning, [mbOK], 0, 0);
+            Exit; // Выходим после запроса ввода
+          end;
+        end;
+      end;
+    end;
+  end
+  else // Все параметры доступны
+  begin
+    // Оценка результатов теста
+    // Здесь предполагается, что dm.checkTime['tpCheck'] уже определено для текущей точки
+    dm.checkTime.Locate('pos;point', VarArrayOf([i, nCheckPoint[i]]), []); // Убедитесь, что nCheckPoint[i] актуально
+    if not dm.checkTime['tpCheck'] then // Если это промежуточная проверка
+    begin
+      ResultIsp(i, nPointBlock[i], True); // Оцениваем промежуточный результат
+      if ResIsp[i] then // Если результат хороший
+      begin
+        BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Blue.bmp'); // Синий цвет
+        Data[i].TimeAllIsp := trunc(DateDiff(mi, Data[i].tmStart, Now)); // Фиксируем общее время теста
+        StatePos[i] := 3; // Тест завершен
+      end
+      else // Если результат плохой
+      begin
+        BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Green.bmp'); // Возвращаемся к зеленому
+        StatePos[i] := 1; // Продолжаем тест (или другая логика для плохого результата)
+        Data[i].TimeAllIsp := 0; // Сбрасываем общее время теста
+      end;
+    end
+    else // Если это окончательная или критическая промежуточная проверка
+    begin
+      ResultIsp(i, nCheckPoint[i], False); // Окончательная оценка
+      if ResIsp[i] then
+        BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\Ok.bmp') // Хороший результат
+      else
+        BtnState[i].Glyph.LoadFromFile(MyDir + 'Img\brak.bmp'); // Плохой результат
+      StatePos[i] := 3; // Тест завершен
+      // Отображение окончательных показаний блока
+      if chBlockXK[i] and (nPointBlock[i] > 0) then
+      begin
+        sgBlockXK[i].Visible := True;
+        edBlockXK[i].Enabled := False;
+        edBlockXK[i].Color := clWindow;
+        // Установка цвета ячеек в зависимости от ResBlockXK
+        for k := 0 to nPointBlock[i] - 1 do
+          if ResBlockXK[i, k] then
+            sgBlockXK[i].Cells[k + 1, 1] := 'OK'
+          else
+            sgBlockXK[i].Cells[k + 1, 1] := 'BRAK';
+      end;
+      // Аналогично для MK
+    end;
+  end;
+end;
+
+---
+
+procedure TfMain.HandleState3(i: Integer);
+begin
+  // StatePos[i] = 3 (Тест завершен/остановлен)
+  // В этом состоянии тест для данной позиции считается завершенным.
+  // Обычно здесь не происходит активных действий, кроме ожидания ручного сброса,
+  // либо обработки результатов для сохранения и отображения.
+
+  // Возможно, здесь можно добавить логику для:
+  // - Окончательной записи результатов в базу данных.
+  // - Генерации отчета.
+  // - Подсветки завершенной позиции на интерфейсе (если не сделано ранее).
+  // - Ожидания действий пользователя (например, кнопка "Сброс" для начала нового теста).
+
+  // На данный момент, если мы в State 3, просто выходим,
+  // так как дальнейшая автоматическая обработка не требуется.
+  Exit;
+end;
+
+---
+
+## Обновление `TfMain.TmrIspTimer`
+
+Теперь, когда у нас есть отдельные процедуры для каждого состояния, `TmrIspTimer` становится очень чистым и простым:
+
+```delphi
+procedure TfMain.TmrIspTimer(Sender: TObject);
+var
+  i: Integer;
+begin
+  lTime.Caption := TimeToStr(Time); // Обновляем метку с текущим временем
+
+  // Общие действия, которые выполняются для каждой позиции независимо от состояния
+  for i := 1 to 12 do
+  begin
+    // Обновление отображения текущего времени теста для всех позиций
+    Data[i].mmCur := trunc(DateDiff(mi, Data[i].tmStart, Now)); // Прошедшие минуты
+    pCurTime[i].Caption := FormatDateTime('hh:mm', Now - Data[i].tmStart);
+
+    // Непрерывная запись данных в массивы и файл
+    WriteDataInArr(i);
+    WriteDataInFile(i);
+
+    // Вызываем соответствующую процедуру в зависимости от текущего состояния
+    case StatePos[i] of
+      0: HandleState0(i);
+      1: HandleState1(i);
+      2: HandleState2(i);
+      3: HandleState3(i);
+    end;
+  end;
+end;
