@@ -1,0 +1,106 @@
+вынести все присваивания для `lChTM` в отдельную процедуру. Вот как это можно сделать:
+
+1. Сначала создадим новую процедуру в разделе `private` класса `TfMain`:
+
+```pascal
+private
+  { Private declarations }
+  procedure AuthenticationLoading(Sender: TObject);
+  procedure UpdateChTmLabel(Position: Integer); // Новая процедура
+public
+  { Public declarations }
+end;
+```
+
+2. Затем реализуем эту процедуру в разделе implementation:
+
+```pascal
+procedure TfMain.UpdateChTmLabel(Position: Integer);
+var
+  mmCurrent: Integer;
+  tm: TDateTime;
+  hh, mm, ss, ms: Word;
+begin
+  // Вычисляем текущее время испытания
+  tm := Now - tmStart[Position];
+  DecodeTime(tm, hh, mm, ss, ms);
+  mmCurrent := 60 * hh + mm;
+
+  // Обновляем видимость метки lChTm в зависимости от условий
+  if bgChTm[Position] then
+  begin
+    if (dm.spXP['Method'] = 'End') then
+    begin
+      if mmCurrent <= CheckTime[Position, nCheckPoint[Position]] then
+        with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := true
+      else
+        with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := false;
+    end
+    else if (dm.spXP['Method'] = 'Off') then
+    begin
+      if numOffCmp[Position] = 0 then
+      begin
+        if mmCurrent <= CheckTime[Position, nCheckPoint[Position]] then
+          with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := true
+        else
+          with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := false;
+      end
+      else
+      begin
+        with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := false;
+      end;
+    end;
+  end
+  else
+  begin
+    if (dm.spXP['Method'] = 'End') then
+    begin
+      if (mmCurrent > (TimeIsp[Position] - CheckTime[Position, nCheckPoint[Position]])) and 
+         (mmCurrent < (TimeIsp[Position])) then
+        with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := true;
+    end
+    else
+    begin
+      if numOffCmp[Position] = 0 then
+      begin
+        if (mmCurrent > (TimeIsp[Position] - CheckTime[Position, nCheckPoint[Position]])) and 
+           (mmCurrent < (TimeIsp[Position])) then
+          with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := true;
+      end
+      else
+      begin
+        with TLabel(FindComponent('lChTm_' + IntToStr(Position))) do Visible := false;
+      end;
+    end;
+  end;
+end;
+```
+
+3. Теперь заменим все места в коде, где происходит работа с `lChTM`, на вызов этой процедуры. Например:
+
+Вместо:
+```pascal
+with TLabel(FindComponent('lChTm_'+IntToStr(nPos))) do Visible:=false;
+```
+
+И других подобных мест, теперь можно использовать:
+```pascal
+UpdateChTmLabel(nPos);
+```
+
+4. В процедуре `edKodKeyDown` можно заменить соответствующий блок на:
+
+```pascal
+// Обновляем метку lChTm
+UpdateChTmLabel(nPos);
+```
+
+5. В процедуре `TmrIspTimer` можно заменить соответствующий блок на:
+
+```pascal
+// Обновляем метку lChTm для текущей позиции
+if (bgChTm[nPos]) or ((not bgChTm[nPos]) and (mmCur[nPos] >= TimeIsp[nPos] - CheckTime[nPos, nCheckPoint[nPos]])) then
+  UpdateChTmLabel(nPos);
+```
+
+Эта новая процедура инкапсулирует всю логику обновления метки `lChTm`, делая код более читаемым и поддерживаемым. Вы можете вызывать ее из любого места, где нужно обновить состояние этой метки.
