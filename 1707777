@@ -1,0 +1,221 @@
+Да, можно разбить этот код на несколько более специализированных процедур, сохранив при этом основную логику. Вот как это можно сделать:
+
+### 1. Разделим основную процедуру на 4 логических блока
+
+```pascal
+unit ControlPointProcessor;
+
+interface
+
+uses
+  Main, Global, DataModule, SysUtils;
+
+procedure ProcessControlPoint(i: Integer; var k: Integer);
+procedure SaveAndDisplayParams(i: Integer);
+procedure CalculatePowerConsumption(i: Integer; var k: Integer);
+procedure PrepareNextCheckPoint(i: Integer);
+procedure SetupBlockInputUI(i: Integer);
+
+implementation
+
+procedure SaveAndDisplayParams(i: Integer);
+begin
+  with fMain do
+  begin
+    with TLabel(FindComponent('lChTm_'+IntToStr(i))) do Visible := false;
+    
+    if not flSavePar[i, nCheckPoint[i]] then
+    begin
+      endTokr[i, nCheckPoint[i]] := Tokr;
+      SaveParamIsp(i);
+      ParamIspInScreen(i, nCheckPoint[i]);
+    end;
+  end;
+end;
+
+procedure CalculatePowerConsumption(i: Integer; var k: Integer);
+var
+  j: Integer;
+begin
+  with fMain do
+  begin
+    if flWch[i, nCheckPoint[i]] then    
+    begin
+      k := nCheckPoint[i];
+      ttWch[i, nCheckPoint[i]] := curWch[i] - bgnWch[i];
+    end
+    else
+    begin
+      for j := nCheckPoint[i] downto 1 do
+        if flWch[i, j] then 
+        begin 
+          k := j; 
+          break; 
+        end;
+    end;
+    
+    if flWch[i, k] then 
+      CheckParamWch(i, k);
+  end;
+end;
+
+procedure SetupBlockInputUI(i: Integer);
+begin
+  with fMain do
+  begin
+    if (chBlockMK[i]) or (chBlockXK[i]) then
+    begin
+      with TLabel(FindComponent('ltBlock_'+IntToStr(i))) do 
+        Caption := chPointToScreen(i, nCheckPoint[i], 'Показания на ');
+      
+      if chBlockMK[i] then
+      begin
+        TempBlockMK[i, nCheckPoint[i]] := valTemp[i, 2];
+        with TJvEdit(FindComponent('EdBlockMK_'+IntToStr(i))) do
+        begin
+          Text := ''; 
+          Color := clYellow; 
+          Enabled := true; 
+          ReadOnly := false;
+        end;
+      end;
+      
+      if chBlockXK[i] then
+      begin
+        TempBlockXK[i, nCheckPoint[i]] := valTemp[i, 1];
+        with TJvEdit(FindComponent('EdBlockXK_'+IntToStr(i))) do
+        begin
+          Text := ''; 
+          Color := clYellow; 
+          Enabled := true; 
+          ReadOnly := false;
+        end;
+      end;
+      
+      with TJvScrollBox(FindComponent('scbBlock'+IntToStr(i))) do 
+        Enabled := true;
+    end;
+  end;
+end;
+
+procedure PrepareNextCheckPoint(i: Integer);
+begin
+  with fMain do
+  begin
+    dm.spXP.Close; 
+    dm.spXP.Open;
+    dm.spXP.Locate('kod', KodXP[i], [loCaseInsensitive]);
+    dm.checkTime.Close; 
+    dm.checkTime.Open; 
+    dm.checkTime.RecNo := nCheckPoint[i];
+    
+    if dm.checkTime.RecordCount > nCheckPoint[i] then
+    begin
+      if not tpCheck[i, nCheckPoint[i]] then
+      begin
+        ResultChPoinTempWtWtch(i, nCheckPoint[i], true);
+        
+        if ResIsp[i] then
+        begin
+          with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do 
+            Glyph.LoadFromFile(MyDir + 'Img\Blue.bmp');
+          TimeAllIsp[i] := Now - tmStart[i];
+          StatePos[i] := 2;
+        end
+        else
+        begin
+          flBlockXK[i, nCheckPoint[i]] := true; 
+          flBlockMK[i, nCheckPoint[i]] := true;
+          StatePos[i] := 1;
+          nPointBlock[i] := nCheckPoint[i];
+          nCheckPoint[i] := nCheckPoint[i] + 1;
+          dm.checkTime.RecNo := nCheckPoint[i]; 
+          CheckTime[i, nCheckPoint[i]] := dm.checkTime['chTime'];
+          with TLabel(FindComponent('lchPoint' + IntToStr(i))) do 
+            Caption := chPointToScreen(i, nCheckPoint[i], 'K:');
+          if (dm.qspPSI['Wtch'] = NULL) then 
+            flWch[i, nCheckPoint[i]] := false 
+          else 
+            flWch[i, nCheckPoint[i]] := true;
+          Exit;
+        end;
+      end;
+
+      SetupBlockInputUI(i);
+      
+      nPointBlock[i] := nCheckPoint[i];
+      nCheckPoint[i] := nCheckPoint[i] + 1;
+      dm.checkTime.RecNo := nCheckPoint[i]; 
+      CheckTime[i, nCheckPoint[i]] := dm.checkTime['chTime'];
+      with TLabel(FindComponent('lchPoint' + IntToStr(i))) do 
+        Caption := chPointToScreen(i, nCheckPoint[i], 'K:');
+      
+      if (dm.qspPSI['Wtch'] = NULL) then 
+        flWch[i, nCheckPoint[i]] := false 
+      else 
+        flWch[i, nCheckPoint[i]] := true;
+      if (dm.qspPSI['Wt'] = NULL) then 
+        flW[i, nCheckPoint[i]] := false 
+      else 
+        flW[i, nCheckPoint[i]] := true;
+    end;
+  end;
+end;
+
+procedure ProcessControlPoint(i: Integer; var k: Integer);
+begin
+  SaveAndDisplayParams(i);
+  CalculatePowerConsumption(i, k);
+  PrepareNextCheckPoint(i);
+end;
+
+end.
+```
+
+### 2. Как теперь вызывать из основного кода
+
+```pascal
+// Было:
+if (((bgChTm[i])and(mmCur[i]=CheckTime[i,nCheckPoint[i]])and(not flSavePar[i,nCheckPoint[i]]))or
+   ((not bgChTm[i])and(mmCur[i]=TimeIsp[i])))
+then
+begin
+  // ... большой блок кода ...
+end;
+
+// Стало:
+if (((bgChTm[i])and(mmCur[i]=CheckTime[i,nCheckPoint[i]])and(not flSavePar[i,nCheckPoint[i]]))or
+   ((not bgChTm[i])and(mmCur[i]=TimeIsp[i])))
+then
+begin
+  ProcessControlPoint(i, k); // k объявлен в вызывающей процедуре
+end;
+```
+
+### 3. Преимущества такого разделения:
+
+1. **Улучшенная читаемость**: Каждая процедура выполняет одну четкую задачу
+2. **Повторное использование**: Эти процедуры можно вызывать из других мест программы
+3. **Упрощенное тестирование**: Можно тестировать каждую часть отдельно
+4. **Гибкость**: Легче вносить изменения в отдельные части логики
+
+### 4. Дополнительные рекомендации:
+
+1. **Добавьте комментарии** к каждой процедуре, объясняющие ее назначение
+2. **Рассмотрите возможность** вынести общие переменные в параметры процедур
+3. **Для сложных проверок** можно создать отдельные функции, например:
+
+```pascal
+function ShouldProcessControlPoint(i: Integer): Boolean;
+begin
+  Result := ((bgChTm[i] and (mmCur[i] = CheckTime[i,nCheckPoint[i]]) and 
+             (not flSavePar[i,nCheckPoint[i]]))) or
+            ((not bgChTm[i]) and (mmCur[i] = TimeIsp[i]));
+end;
+
+// Тогда вызов будет еще проще:
+if ShouldProcessControlPoint(i) then
+  ProcessControlPoint(i, k);
+```
+
+Такой подход сохраняет исходную логику практически без изменений, но делает код более структурированным и поддерживаемым.
