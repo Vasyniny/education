@@ -1,0 +1,178 @@
+Отлипроцед
+
+### 1. Создаем новый модуль
+Создайте новый unit (например, `ControlPointProcessor.pas`) и добавьте его в uses основного модуля.
+
+### 2. Переносим код в новую процедуру
+В новом модуле создадим процедуру с понятным названием:
+
+```pascal
+unit ControlPointProcessor;
+
+interface
+
+uses
+  Main, Global, DataModule, SysUtils;
+
+procedure ProcessControlPoint(i: Integer; var k: Integer);
+
+implementation
+
+procedure ProcessControlPoint(i: Integer; var k: Integer);
+var
+  j: Integer;
+begin
+  with fMain do
+  begin
+    with TLabel(FindComponent('lChTm_'+IntToStr(i))) do Visible:=false;
+    
+    if not flSavePar[i,nCheckPoint[i]] then
+    begin
+      endTokr[i,nCheckPoint[i]]:=Tokr;
+      SaveParamIsp(i);
+      ParamIspInScreen(i,nCheckPoint[i]);
+    end;
+
+    // расход эл/эн ХП
+    if flWch[i,nCheckPoint[i]] then    
+    begin
+      k:=nCheckPoint[i];
+      ttWch[i,nCheckPoint[i]]:=curWch[i]-bgnWch[i];
+    end
+    else
+    begin
+      for j:=nCheckPoint[i] downto 1 do
+        if flWch[i,j] then begin k:=j; break; end;
+    end;
+    
+    if flWch[i,k] then CheckParamWch(i,k);
+
+    // переход на следующую контрольную точку
+    dm.spXP.Close; dm.spXP.open;
+    dm.spXP.Locate('kod',KodXP[i],[loCaseInsensitive]);
+    dm.checkTime.Close; dm.checkTime.Open; dm.checkTime.RecNo:=nCheckPoint[i];
+    
+    if dm.checkTime.RecordCount>nCheckPoint[i] then
+    begin
+      if not tpCheck[i,nCheckPoint[i]] then
+      begin
+        ResultChPoinTempWtWtch(i,nCheckPoint[i],true);
+        
+        if ResIsp[i] then
+        begin
+          with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do 
+            Glyph.LoadFromFile(MyDir+'Img\Blue.bmp');
+          TimeAllIsp[i]:=Now-tmStart[i];
+          StatePos[i]:=2;
+        end
+        else
+        begin
+          flBlockXK[i,nCheckPoint[i]]:=true; 
+          flBlockMK[i,nCheckPoint[i]]:=true;
+          StatePos[i]:=1;
+          nPointBlock[i]:=nCheckPoint[i];
+          nCheckPoint[i]:=nCheckPoint[i]+1;
+          dm.checkTime.RecNo:=nCheckPoint[i]; 
+          CheckTime[i,nCheckPoint[i]]:=dm.checkTime['chTime'];
+          with TLabel(FindComponent('lchPoint'+IntToStr(i))) do 
+            Caption:=chPointToScreen(i,nCheckPoint[i],'K:');
+          if (dm.qspPSI['Wtch']=NULL) then 
+            flWch[i,nCheckPoint[i]]:=false 
+          else 
+            flWch[i,nCheckPoint[i]]:=true;
+          Exit;
+        end;
+      end;
+
+      if (chBlockMK[i])or(chBlockXK[i]) then
+      begin
+        with TLabel(FindComponent('ltBlock_'+IntToStr(i))) do 
+          Caption:=chPointToScreen(i,nCheckPoint[i],'Показания на ');
+        
+        if chBlockMK[i] then
+        begin
+          TempBlockMK[i,nCheckPoint[i]]:=valTemp[i,2];
+          with TJvEdit(FindComponent('EdBlockMK_'+IntToStr(i))) do
+          begin
+            Text:=''; Color:=clYellow; Enabled:=true; ReadOnly:=false;
+          end;
+        end;
+        
+        if chBlockXK[i] then
+        begin
+          TempBlockXK[i,nCheckPoint[i]]:=valTemp[i,1];
+          with TJvEdit(FindComponent('EdBlockXK_'+IntToStr(i))) do
+          begin
+            Text:=''; Color:=clYellow; Enabled:=true; ReadOnly:=false;
+          end;
+        end;
+        
+        with TJvScrollBox(FindComponent('scbBlock'+IntToStr(i))) do Enabled:=true;
+      end;
+      
+      nPointBlock[i]:=nCheckPoint[i];
+      nCheckPoint[i]:=nCheckPoint[i]+1;
+      dm.checkTime.RecNo:=nCheckPoint[i]; 
+      CheckTime[i,nCheckPoint[i]]:=dm.checkTime['chTime'];
+      with TLabel(FindComponent('lchPoint'+IntToStr(i))) do 
+        Caption:=chPointToScreen(i,nCheckPoint[i],'K:');
+      
+      if (dm.qspPSI['Wtch']=NULL) then 
+        flWch[i,nCheckPoint[i]]:=false 
+      else 
+        flWch[i,nCheckPoint[i]]:=true;
+      if (dm.qspPSI['Wt']=NULL) then 
+        flW[i,nCheckPoint[i]]:=false 
+      else 
+        flW[i,nCheckPoint[i]]:=true;
+    end;
+  end;
+end;
+
+end.
+```
+
+### 3. Модифицируем исходный код
+Заменим перенесенный код вызовом новой процедуры:
+
+```pascal
+// Было:
+if (((bgChTm[i])and(mmCur[i]=CheckTime[i,nCheckPoint[i]])and(not flSavePar[i,nCheckPoint[i]]))or
+   ((not bgChTm[i])and(mmCur[i]=TimeIsp[i])))
+then
+begin
+  // ... весь перенесенный код ...
+end;
+
+// Стало:
+if (((bgChTm[i])and(mmCur[i]=CheckTime[i,nCheckPoint[i]])and(not flSavePar[i,nCheckPoint[i]]))or
+   ((not bgChTm[i])and(mmCur[i]=TimeIsp[i])))
+then
+begin
+  ProcessControlPoint(i, k); // k должен быть объявлен в вызывающей процедуре
+end;
+```
+
+### 4. Необходимые доработки
+
+1. **Объявите модуль в uses** основного модуля:
+   ```pascal
+   uses
+     ..., ControlPointProcessor;
+   ```
+
+2. **Переменная k** должна быть объявлена в вызывающей процедуре (там, где вызывается ProcessControlPoint).
+
+3. **Перенесите все используемые функции** (SaveParamIsp, ParamIspInScreen и др.) в интерфейсную часть нового модуля или оставьте их в основном модуле, если они используются в других местах.
+
+### 5. Дополнительные рекомендации
+
+1. **Параметризация**: Можно сделать процедуру более универсальной, передавая в нее все необходимые параметры, а не используя глобальные переменные.
+
+2. **Разделение на подпроцедуры**: Этот код можно разделить на несколько более мелких процедур для лучшей читаемости.
+
+3. **Обработка ошибок**: Добавьте проверки на nil перед работой с компонентами.
+
+4. **Комментарии**: Добавьте поясняющие комментарии к новой процедуре.
+
+Такой подход сохранит исходную логику, но сделает код более организованным и удобным для поддержки.
