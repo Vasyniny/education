@@ -1,0 +1,273 @@
+ВотТа
+
+```pascal
+unit ControlPointProcessor;
+
+interface
+
+uses
+  Main, Global, DataModule, SysUtils;
+
+// Основная процедура обработки контрольной точки
+// i - номер позиции (испытательного места)
+// k - возвращает номер контрольной точки, для которой рассчитывался расход эл/эн
+procedure ProcessControlPoint(i: Integer; var k: Integer);
+
+// Сохраняет параметры и обновляет интерфейс
+// i - номер позиции
+procedure SaveAndDisplayParams(i: Integer);
+
+// Рассчитывает потребление электроэнергии
+// i - номер позиции
+// k - возвращает номер контрольной точки с актуальным расходом
+procedure CalculatePowerConsumption(i: Integer; var k: Integer);
+
+// Подготавливает данные для перехода к следующей контрольной точке
+// i - номер позиции
+procedure PrepareNextCheckPoint(i: Integer);
+
+// Настраивает пользовательский интерфейс для ввода показаний блоков
+// i - номер позиции
+procedure SetupBlockInputUI(i: Integer);
+
+implementation
+
+procedure SaveAndDisplayParams(i: Integer);
+begin
+  with fMain do
+  begin
+    // Скрываем индикатор контрольного времени
+    with TLabel(FindComponent('lChTm_'+IntToStr(i))) do 
+      Visible := false;
+    
+    // Если параметры для текущей точки еще не сохранялись
+    if not flSavePar[i, nCheckPoint[i]] then
+    begin
+      // Сохраняем конечное значение температуры
+      endTokr[i, nCheckPoint[i]] := Tokr;
+      
+      // Сохраняем все контрольные параметры
+      SaveParamIsp(i);
+      
+      // Обновляем отображение параметров на экране
+      ParamIspInScreen(i, nCheckPoint[i]);
+    end;
+  end;
+end;
+
+procedure CalculatePowerConsumption(i: Integer; var k: Integer);
+var
+  j: Integer;
+begin
+  with fMain do
+  begin
+    // Если для текущей точки учитывается расход электроэнергии
+    if flWch[i, nCheckPoint[i]] then    
+    begin
+      k := nCheckPoint[i]; // Используем текущую точку
+      
+      // Рассчитываем расход как разницу между текущим и начальным значением
+      ttWch[i, nCheckPoint[i]] := curWch[i] - bgnWch[i];
+    end
+    else
+    begin
+      // Ищем ближайшую предыдущую точку, где учитывался расход
+      for j := nCheckPoint[i] downto 1 do
+        if flWch[i, j] then 
+        begin 
+          k := j; // Запоминаем номер точки
+          break; // Прерываем поиск
+        end;
+    end;
+    
+    // Если нашли точку для учета расхода - проверяем параметры
+    if flWch[i, k] then 
+      CheckParamWch(i, k);
+  end;
+end;
+
+procedure SetupBlockInputUI(i: Integer);
+begin
+  with fMain do
+  begin
+    // Если нужно вводить показания блоков (ХК или МК)
+    if (chBlockMK[i]) or (chBlockXK[i]) then
+    begin
+      // Устанавливаем заголовок для ввода показаний
+      with TLabel(FindComponent('ltBlock_'+IntToStr(i))) do 
+        Caption := chPointToScreen(i, nCheckPoint[i], 'Показания на ');
+      
+      // Настройка интерфейса для блока МК
+      if chBlockMK[i] then
+      begin
+        // Запоминаем текущую температуру МК
+        TempBlockMK[i, nCheckPoint[i]] := valTemp[i, 2];
+        
+        // Настраиваем поле ввода
+        with TJvEdit(FindComponent('EdBlockMK_'+IntToStr(i))) do
+        begin
+          Text := ''; // Очищаем поле
+          Color := clYellow; // Подсвечиваем желтым
+          Enabled := true; // Разрешаем ввод
+          ReadOnly := false; // Делаем доступным для редактирования
+        end;
+      end;
+      
+      // Настройка интерфейса для блока ХК
+      if chBlockXK[i] then
+      begin
+        // Запоминаем текущую температуру ХК
+        TempBlockXK[i, nCheckPoint[i]] := valTemp[i, 1];
+        
+        // Настраиваем поле ввода
+        with TJvEdit(FindComponent('EdBlockXK_'+IntToStr(i))) do
+        begin
+          Text := '';
+          Color := clYellow;
+          Enabled := true;
+          ReadOnly := false;
+        end;
+      end;
+      
+      // Активируем область прокрутки с элементами управления
+      with TJvScrollBox(FindComponent('scbBlock'+IntToStr(i))) do 
+        Enabled := true;
+    end;
+  end;
+end;
+
+procedure PrepareNextCheckPoint(i: Integer);
+begin
+  with fMain do
+  begin
+    // Обновляем данные о модели ХП
+    dm.spXP.Close; 
+    dm.spXP.Open;
+    dm.spXP.Locate('kod', KodXP[i], [loCaseInsensitive]);
+    
+    // Загружаем данные о контрольных точках
+    dm.checkTime.Close; 
+    dm.checkTime.Open; 
+    dm.checkTime.RecNo := nCheckPoint[i];
+    
+    // Если есть еще контрольные точки
+    if dm.checkTime.RecordCount > nCheckPoint[i] then
+    begin
+      // Если текущая точка не является браковочной
+      if not tpCheck[i, nCheckPoint[i]] then
+      begin
+        // Проверяем параметры на текущей точке
+        ResultChPoinTempWtWtch(i, nCheckPoint[i], true);
+        
+        // Если результат удовлетворительный
+        if ResIsp[i] then
+        begin
+          // Меняем цвет кнопки на синий
+          with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do 
+            Glyph.LoadFromFile(MyDir + 'Img\Blue.bmp');
+          
+          // Запоминаем общее время испытания
+          TimeAllIsp[i] := Now - tmStart[i];
+          
+          // Переходим в режим ввода данных
+          StatePos[i] := 2;
+        end
+        else
+        begin
+          // Пропускаем ввод данных для блоков
+          flBlockXK[i, nCheckPoint[i]] := true; 
+          flBlockMK[i, nCheckPoint[i]] := true;
+          
+          // Возвращаемся в режим испытания
+          StatePos[i] := 1;
+          
+          // Переходим к следующей точке
+          nPointBlock[i] := nCheckPoint[i];
+          nCheckPoint[i] := nCheckPoint[i] + 1;
+          
+          // Обновляем данные о следующей точке
+          dm.checkTime.RecNo := nCheckPoint[i]; 
+          CheckTime[i, nCheckPoint[i]] := dm.checkTime['chTime'];
+          
+          // Обновляем отображение номера точки
+          with TLabel(FindComponent('lchPoint' + IntToStr(i))) do 
+            Caption := chPointToScreen(i, nCheckPoint[i], 'K:');
+          
+          // Определяем, нужно ли учитывать расход на следующей точке
+          if (dm.qspPSI['Wtch'] = NULL) then 
+            flWch[i, nCheckPoint[i]] := false 
+          else 
+            flWch[i, nCheckPoint[i]] := true;
+          
+          Exit; // Прерываем выполнение
+        end;
+      end;
+
+      // Настраиваем интерфейс для ввода данных
+      SetupBlockInputUI(i);
+      
+      // Переходим к следующей контрольной точке
+      nPointBlock[i] := nCheckPoint[i];
+      nCheckPoint[i] := nCheckPoint[i] + 1;
+      
+      // Обновляем данные о новой точке
+      dm.checkTime.RecNo := nCheckPoint[i]; 
+      CheckTime[i, nCheckPoint[i]] := dm.checkTime['chTime'];
+      
+      // Обновляем отображение
+      with TLabel(FindComponent('lchPoint' + IntToStr(i))) do 
+        Caption := chPointToScreen(i, nCheckPoint[i], 'K:');
+      
+      // Определяем параметры для следующей точки
+      if (dm.qspPSI['Wtch'] = NULL) then 
+        flWch[i, nCheckPoint[i]] := false 
+      else 
+        flWch[i, nCheckPoint[i]] := true;
+        
+      if (dm.qspPSI['Wt'] = NULL) then 
+        flW[i, nCheckPoint[i]] := false 
+      else 
+        flW[i, nCheckPoint[i]] := true;
+    end;
+  end;
+end;
+
+procedure ProcessControlPoint(i: Integer; var k: Integer);
+begin
+  // 1. Сохраняем параметры и обновляем интерфейс
+  SaveAndDisplayParams(i);
+  
+  // 2. Рассчитываем потребление электроэнергии
+  CalculatePowerConsumption(i, k);
+  
+  // 3. Подготавливаем переход к следующей контрольной точке
+  PrepareNextCheckPoint(i);
+end;
+
+end.
+```
+
+### Ключевые улучшения:
+
+1. **Каждая процедура имеет четкую цель**:
+   - `SaveAndDisplayParams` - только сохранение и отображение
+   - `CalculatePowerConsumption` - только расчеты энергии
+   - `SetupBlockInputUI` - только настройка интерфейса
+   - `PrepareNextCheckPoint` - только подготовка следующей точки
+
+2. **Подробные комментарии** объясняют:
+   - Назначение каждой процедуры
+   - Параметры и их смысл
+   - Ключевые шаги внутри процедур
+   - Логику принятия решений
+
+3. **Минимальные изменения** исходной логики:
+   - Сохранена вся бизнес-логика
+   - Изменена только структура кода
+
+4. **Удобство сопровождения**:
+   - Можно модифицировать каждую часть отдельно
+   - Легче находить и исправлять ошибки
+   - Проще добавлять новую функциональность
+
+Такой код будет гораздо понятнее для новых разработчиков и упростит дальнейшую поддержку проекта.
