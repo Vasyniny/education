@@ -1,0 +1,77 @@
+Вот более простой вариант с минимальными изменениями:
+
+1. Сначала создайте текстовый файл `comports.txt` в папке с программой и запишите в него две строки:
+```
+COM3
+COM7
+```
+(Первая строка - порт для ELprib, вторая - для Metakon)
+
+2. Затем добавьте этот код:
+
+```pascal
+// В раздел var добавьте:
+var
+  ELpribPort, MetakonPort: string;
+
+// Новая функция для чтения портов из файла
+procedure LoadComPortsFromFile;
+var
+  F: TextFile;
+begin
+  // Файл будет в той же папке, что и программа
+  AssignFile(F, ExtractFilePath(Application.ExeName) + 'comports.txt');
+  try
+    Reset(F);
+    ReadLn(F, ELpribPort);    // Читаем первую строку - порт ELprib
+    ReadLn(F, MetakonPort);   // Читаем вторую строку - порт Metakon
+    CloseFile(F);
+  except
+    // Если файла нет или ошибка - используем значения по умолчанию
+    ELpribPort := 'COM3';
+    MetakonPort := 'COM7';
+  end;
+end;
+
+// В FormCreate добавьте вызов загрузки портов:
+procedure TfMain.FormCreate(Sender: TObject);
+begin
+  // ... существующий код ...
+  
+  // Загружаем настройки COM-портов
+  LoadComPortsFromFile;
+  
+  // ... остальной код ...
+end;
+
+// В FormActivate измените инициализацию портов:
+procedure TfMain.FormActivate(Sender: TObject);
+begin
+  if flPsw then 
+  begin
+    // ... существующий код ...
+    
+    // Инициализация портов (заменяем жестко заданные COM3 и COM7)
+    ELprib.Port := ELpribPort;
+    ELprib.Open;
+    ELprib.Connected := true;
+
+    Metakon.Port := MetakonPort;
+    // Metakon.Open; // Раскомментируйте при необходимости
+    // Metakon.Connected := true;
+    
+    // ... остальной код ...
+  end;
+end;
+```
+
+Что изменилось:
+1. Теперь используется простой текстовый файл `comports.txt` с двумя строками
+2. Добавлена одна простая функция `LoadComPortsFromFile` для чтения портов
+3. При ошибке чтения файла используются значения по умолчанию (COM3 и COM7)
+4. Минимальные изменения в основном коде - просто заменены жестко заданные порты на переменные
+
+Для использования:
+1. Создайте файл `comports.txt` в папке с программой
+2. Запишите в него нужные порты (по одному на строку)
+3. При следующем запуске программа будет использовать указанные порты
