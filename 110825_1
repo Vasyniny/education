@@ -1,0 +1,154 @@
+Вот как можно выделить работу с COM-портами в отдельную процедуру и вынести номер порта в отдельный файл:
+
+```pascal
+// Добавляем в раздел type
+type
+  TComPortSettings = record
+    ELpribPort: string;
+    MetakonPort: string;
+  end;
+
+// Добавляем в раздел var
+var
+  ComSettings: TComPortSettings;
+  ComSettingsFile: string;
+
+// Новая процедура для загрузки настроек COM-портов
+procedure LoadComPortSettings;
+var
+  F: TextFile;
+begin
+  ComSettingsFile := ExtractFilePath(Application.ExeName) + 'comports.cfg';
+  if FileExists(ComSettingsFile) then
+  begin
+    AssignFile(F, ComSettingsFile);
+    Reset(F);
+    ReadLn(F, ComSettings.ELpribPort);
+    ReadLn(F, ComSettings.MetakonPort);
+    CloseFile(F);
+  end
+  else
+  begin
+    // Значения по умолчанию
+    ComSettings.ELpribPort := 'COM3';
+    ComSettings.MetakonPort := 'COM7';
+    
+    // Сохраняем настройки по умолчанию
+    AssignFile(F, ComSettingsFile);
+    Rewrite(F);
+    WriteLn(F, ComSettings.ELpribPort);
+    WriteLn(F, ComSettings.MetakonPort);
+    CloseFile(F);
+  end;
+end;
+
+// Новая процедура для инициализации COM-портов
+procedure InitializeComPorts;
+begin
+  // Инициализация порта ELprib
+  ELprib.Port := ComSettings.ELpribPort;
+  ELprib.BaudRate := br9600; // или другое значение по умолчанию
+  ELprib.Open;
+  ELprib.Connected := true;
+
+  // Инициализация порта Metakon
+  Metakon.Port := ComSettings.MetakonPort;
+  Metakon.BaudRate := br9600; // или другое значение по умолчанию
+  // Metakon.Open и Metakon.Connected раскомментируйте, когда нужно
+end;
+
+// Модифицируем FormCreate
+procedure TfMain.FormCreate(Sender: TObject);
+var st:string;
+begin
+  MyDir := ExtractFilePath(Application.ExeName);
+  lDate.Caption := DateToStr(Date);
+  
+  // Загружаем настройки COM-портов
+  LoadComPortSettings;
+  
+  // проверка наличия папки DataIsp
+  st := MyDir + 'DataIsp';
+  if not DirectoryExists(st) then
+  try
+    CreateDir(st);
+  except
+    MessageDlgPos('Не удалось создать папку '+st+'. Создайте ее вручную.', mtWarning, [mbOk], 0, fMain.Left+250, fMain.Top+350);
+    Application.Terminate;
+  end;
+  
+  // проверка наличия файлов картинок
+  st := MyDir + 'Img';       
+  if (not FileExists(st+'\Blue.bmp')) or (not FileExists(st+'\brak.bmp')) or 
+     (not FileExists(st+'\graph.bmp')) or (not FileExists(st+'\Gray.bmp')) or 
+     (not FileExists(st+'\Green.bmp')) or (not FileExists(st+'\OK.bmp')) or
+     (not FileExists(st+'\Yellow.bmp')) then 
+  begin
+    MessageDlgPos('Отсутствуют файлы, необходимые для работы программы. Обратитесь к разработчику.', mtWarning, [mbOk], 0, fMain.Left+250, fMain.Top+350);
+    Application.Terminate;
+  end;
+end;
+
+// Модифицируем FormActivate
+procedure TfMain.FormActivate(Sender: TObject);
+var i,nDev:integer; st:string;
+begin
+  if flPsw then 
+  begin
+    for i := 1 to 4 do Dev.State[i] := true;
+    for i := 1 to 12 do ClearComponent(i);
+    
+    // статус приборов - On/Off
+    st := MyDir + 'DataIsp\StateDev.dat';
+    AssignFile(fDev, st);
+    try
+      if FileExists(st) then
+      begin
+        reset(fDev); 
+        read(fDev, Dev);
+      end
+      else
+      begin
+        rewrite(fDev); 
+        write(fDev, Dev);
+      end;
+      CloseFile(fDev);
+    except
+      CloseFile(fDev);
+      DeleteFile(st);
+    end;
+    
+    // Инициализация COM-портов
+    InitializeComPorts;
+    
+    // остальной код FormActivate остается без изменений
+    ...
+    
+    // порт COM3 (теперь берем из настроек)
+    ELprib.Open;
+    ELprib.Connected := true;
+    TmrELprib.Enabled := true;
+    
+    // порт COM7 (теперь берем из настроек)
+    nMetakon := 1{3}; 
+    nChanMet := 5;
+    // Metakon.Open; Metakon.Connected := true;
+    TmrMetakon.Enabled := true;
+    
+    // остальной код FormActivate остается без изменений
+    ...
+  end;
+end;
+```
+
+Основные изменения:
+
+1. Добавлен тип `TComPortSettings` для хранения настроек COM-портов
+2. Добавлена процедура `LoadComPortSettings` для загрузки настроек из файла
+3. Добавлена процедура `InitializeComPorts` для инициализации портов
+4. В `FormCreate` добавлен вызов загрузки настроек
+5. В `FormActivate` изменена инициализация портов на использование настроек из файла
+
+Файл настроек `comports.cfg` будет создан в папке с программой и содержать две строки - номера COM-портов для ELprib и Metakon. При первом запуске создается файл с настройками по умолчанию (COM3 и COM7).
+
+Основной код работы с COM-портами остается прежним, но теперь номера портов берутся из настроек, а не жестко закодированы в программе.
