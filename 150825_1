@@ -1,0 +1,54 @@
+procedure TfMain.BtnStopAllTestsClick(Sender: TObject);
+var
+  i: integer;
+  ActiveTestsCount: integer;
+begin
+  // Подсчет активных испытаний
+  ActiveTestsCount := 0;
+  for i := 1 to 12 do
+    if StatePos[i] in [1, 2] then // 1 - активно, 2 - ожидание данных
+      Inc(ActiveTestsCount);
+
+  if ActiveTestsCount = 0 then
+  begin
+    MessageDlgPos('Нет активных испытаний для прерывания.', mtInformation, [mbOk], 0, fMain.Left+250, fMain.Top+350);
+    Exit;
+  end;
+
+  // Единственное подтверждение для всех испытаний
+  if MessageDlgPos('Вы действительно хотите прервать все ' + IntToStr(ActiveTestsCount) + 
+     ' активных испытаний?', mtConfirmation, [mbYes, mbNo], 0, fMain.Left+250, fMain.Top+350) <> mrYes then
+    Exit;
+
+  // Массовое прерывание без дополнительных подтверждений
+  for i := 1 to 12 do
+  begin
+    if StatePos[i] in [1, 2] then // Если испытание активно или ожидает данных
+    begin
+      // Принудительное завершение
+      StatePos[i] := 3;
+      TimeAllIsp[i] := Now - tmStart[i];
+      
+      // Фиксация текущих параметров
+      if not flSavePar[i, nCheckPoint[i]] then
+      begin
+        endTokr[i, nCheckPoint[i]] := Tokr;
+        SaveParamIsp(i);
+        ParamIspInScreen(i, nCheckPoint[i]);
+      end;
+      
+      // Оценка результата
+      ResultIsp(i, nCheckPoint[i], false);
+      
+      // Обновление интерфейса
+      with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do
+        Glyph.LoadFromFile(MyDir + IfThen(ResIsp[i], 'Img\Ok.bmp', 'Img\brak.bmp'));
+      
+      // Сохранение данных
+      WriteDataInArr(i);
+      WriteDataInFile(i);
+    end;
+  end;
+
+  MessageDlgPos('Прервано ' + IntToStr(ActiveTestsCount) + ' испытаний.', mtInformation, [mbOk], 0, fMain.Left+250, fMain.Top+350);
+end;
