@@ -1,0 +1,96 @@
+procedure TfMain.BtnStopAllTestsClick(Sender: TObject);
+var
+  i: integer;
+  AnyActiveTests: Boolean;
+begin
+  // Проверяем наличие активных испытаний
+  AnyActiveTests := False;
+  for i := 1 to 12 do
+  begin
+    if StatePos[i] in [1, 2] then // 1 - активно, 2 - ожидание данных
+    begin
+      AnyActiveTests := True;
+      Break;
+    end;
+  end;
+
+  if not AnyActiveTests then
+  begin
+    MessageDlgPos('Нет активных испытаний для прерывания.', mtInformation, [mbOk], 0, fMain.Left+250, fMain.Top+350);
+    Exit;
+  end;
+
+  // Подтверждение действия
+  if MessageDlgPos('Вы действительно хотите прервать все активные испытания?', mtConfirmation,
+     [mbYes, mbNo], 0, fMain.Left+250, fMain.Top+350) <> mrYes then
+    Exit;
+
+  // Прерываем все активные испытания
+  for i := 1 to 12 do
+  begin
+    if StatePos[i] in [1, 2] then // Если испытание активно или ожидает данных
+    begin
+      // Эмулируем нажатие кнопки BtnState для этой позиции
+      if TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) <> nil then
+      begin
+        // Проверяем код модели (как в оригинальном BtnStateClick)
+        with TJvEdit(FindComponent('edKod_' + IntToStr(i))) do
+        begin
+          if Text <> '' then
+          begin
+            // Устанавливаем текущую позицию
+            nPos := i;
+            
+            // Вызываем обработчик состояния (аналогично оригинальному BtnStateClick)
+            if StatePos[i] = 3 then
+            begin
+              // Если уже завершено - очищаем
+              if MessageDlgPos('Очистить место '+IntToStr(i)+'?', mtConfirmation, [mbYes, mbNo], 0, fMain.Left+250, fMain.Top+350) = mrYes then
+              begin
+                if valW[i] > UstW then
+                  MessageDlgPos('Отключите ХП от сети и нажмите OK', mtInformation, [mbOk], 0, fMain.Left+250, fMain.Top+350);
+                ClearComponent(i);
+                DeleteFile(MyDir+'DataIsp\data_'+IntToStr(i)+'.dat');
+              end;
+            end
+            else
+            begin
+              // Прерываем испытание
+              if MessageDlgPos('Прервать испытание на поз.'+IntToStr(i)+'?', mtConfirmation, [mbYes, mbNo], 0, fMain.Left+250, fMain.Top+350) = mrYes then
+              begin
+                StatePos[i] := 3;
+                TimeAllIsp[i] := Now - tmStart[i];
+                
+                // Сохраняем параметры
+                if not flSavePar[i,nCheckPoint[i]] then
+                begin
+                  endTokr[i,nCheckPoint[i]] := Tokr;
+                  SaveParamIsp(i);
+                  ParamIspInScreen(i, nCheckPoint[i]);
+                end;
+                
+                // Оценка результата
+                ResultIsp(i, nCheckPoint[i], false);
+                
+                // Меняем иконку
+                with TJvXPButton(FindComponent('BtnState_' + IntToStr(i))) do
+                begin
+                  if ResIsp[i] then
+                    Glyph.LoadFromFile(MyDir+'Img\Ok.bmp')
+                  else
+                    Glyph.LoadFromFile(MyDir+'Img\brak.bmp');
+                end;
+                
+                // Сохраняем данные
+                WriteDataInArr(i);
+                WriteDataInFile(i);
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  MessageDlgPos('Все активные испытания прерваны.', mtInformation, [mbOk], 0, fMain.Left+250, fMain.Top+350);
+end;
